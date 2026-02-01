@@ -377,49 +377,121 @@ class ViewBot extends EventEmitter {
                         }
                     }).catch(() => {});
                     
-                    // 2. 비디오가 실제로 재생 중인지 확인 및 최소 시청 시간 확보
-                    await this.sleep(5000);
-                    const isPlaying = await page.evaluate(() => {
+                    // 2. 비디오 요소 찾기 및 재생 강제
+                    await this.sleep(3000);
+                    
+                    // 비디오 재생 강제 시도
+                    const videoStarted = await page.evaluate(async () => {
                         const video = document.querySelector('video');
                         if (video) {
-                            if (video.paused) {
-                                video.play().catch(() => {});
+                            try {
+                                // 재생 시도
+                                if (video.paused) {
+                                    await video.play();
+                                }
+                                
+                                // 재생 속도 정상화 (1.0x)
+                                if (video.playbackRate !== 1.0) {
+                                    video.playbackRate = 1.0;
+                                }
+                                
+                                // 음소거 해제 (시청자 수 집계에 중요)
+                                video.muted = false;
+                                video.volume = 0.3; // 낮은 볼륨으로 설정
+                                
+                                return !video.paused;
+                            } catch (e) {
+                                return false;
                             }
-                            return !video.paused;
                         }
                         return false;
                     }).catch(() => false);
                     
+                    if (!videoStarted) {
+                        // 재생 버튼 다시 클릭 시도
+                        await page.evaluate(() => {
+                            const playButton = document.querySelector('.ytp-play-button, .ytp-large-play-button');
+                            if (playButton) {
+                                playButton.click();
+                            }
+                        });
+                        await this.sleep(2000);
+                    }
+                    
+                    // 3. 비디오가 실제로 재생 중인지 확인 (주기적으로)
+                    let isPlaying = false;
+                    for (let checkCount = 0; checkCount < 5; checkCount++) {
+                        isPlaying = await page.evaluate(() => {
+                            const video = document.querySelector('video');
+                            return video && !video.paused && !video.ended && video.readyState >= 2;
+                        }).catch(() => false);
+                        
+                        if (isPlaying) break;
+                        await this.sleep(2000);
+                    }
+                    
                     if (isPlaying) {
-                        this.emit('update', { type: 'success', message: `[인스턴스 ${instanceId}] 비디오 재생 중` });
+                        this.emit('update', { type: 'success', message: `[인스턴스 ${instanceId}] 비디오 재생 중 - 최소 30초 이상 시청` });
                         
-                        // 3. 최소 시청 시간 확보 (30초 이상 - YouTube 시청자 수 집계 기준)
-                        const minWatchTime = 30000; // 30초
-                        const watchTime = this.randomDelay(minWatchTime, minWatchTime + 30000);
+                        // 4. 최소 시청 시간 확보 (30초 이상 - YouTube 시청자 수 집계 기준)
+                        const minWatchTime = 35000; // 35초 (여유 있게)
+                        const maxWatchTime = 60000; // 최대 60초
+                        const watchTime = this.randomDelay(minWatchTime, maxWatchTime);
                         
-                        // 4. 자연스러운 시청 행동 시뮬레이션 (리소스 절약)
+                        this.emit('update', { type: 'info', message: `[인스턴스 ${instanceId}] ${Math.floor(watchTime / 1000)}초 동안 시청 중...` });
+                        
+                        // 5. 자연스러운 시청 행동 시뮬레이션 + 재생 상태 주기적 확인
                         let elapsed = 0;
-                        const interactionInterval = 8000; // 상호작용 간격 증가 (리소스 절약)
+                        const checkInterval = 5000; // 5초마다 재생 상태 확인
+                        const interactionInterval = 10000; // 10초마다 상호작용
                         
                         while (elapsed < watchTime && this.running) {
-                            // 주기적으로 마우스 움직임 (간격 증가)
-                            if (elapsed % interactionInterval < 2000) {
-                                await page.mouse.move(
-                                    this.randomDelay(200, 400),
-                                    this.randomDelay(200, 400)
-                                ).catch(() => {}); // 에러 무시
+                            // 주기적으로 재생 상태 확인
+                            if (elapsed % checkInterval < 1000) {
+                                const stillPlaying = await page.evaluate(() => {
+                                    const video = document.querySelector('video');
+                                    if (video && video.paused) {
+                                        video.play().catch(() => {});
+                                    }
+                                    return video && !video.paused && !video.ended;
+                                }).catch(() => false);
+                                
+                                if (!stillPlaying) {
+                                    this.emit('update', { type: 'warning', message: `[인스턴스 ${instanceId}] 비디오 재생 중단 감지, 재시작 시도...` });
+                                    await page.evaluate(() => {
+                                        const video = document.querySelector('video');
+                                        if (video) {
+                                            video.play().catch(() => {});
+                                        }
+                                    });
+                                }
                             }
                             
-                            // 가끔 스크롤 (간격 증가)
-                            if (elapsed % (interactionInterval * 2) < 2000) {
+                            // 주기적으로 마우스 움직임 (자연스러운 행동)
+                            if (elapsed % interactionInterval < 2000) {
+                                await page.mouse.move(
+                                    this.randomDelay(100, 500),
+                                    this.randomDelay(100, 500)
+                                ).catch(() => {});
+                            }
+                            
+                            // 가끔 스크롤
+                            if (elapsed % (interactionInterval * 1.5) < 2000) {
                                 await page.evaluate(() => {
-                                    window.scrollBy(0, 200);
+                                    window.scrollBy(0, this.randomDelay(100, 300));
                                 }).catch(() => {});
                             }
                             
-                            await this.sleep(2000); // 대기 시간 증가 (CPU 부하 감소)
+                            await this.sleep(2000);
                             elapsed += 2000;
                         }
+                        
+                        // 최소 시청 시간 완료 확인
+                        if (elapsed >= minWatchTime) {
+                            this.emit('update', { type: 'success', message: `[인스턴스 ${instanceId}] 최소 시청 시간 완료 (${Math.floor(elapsed / 1000)}초)` });
+                        }
+                    } else {
+                        this.emit('update', { type: 'warning', message: `[인스턴스 ${instanceId}] 비디오 재생 실패 - 시청자 수 집계에 포함되지 않을 수 있음` });
                     }
                 } catch (error) {
                     this.emit('update', { type: 'warning', message: `[인스턴스 ${instanceId}] 비디오 재생 시도 실패` });
@@ -665,7 +737,7 @@ class ViewBot extends EventEmitter {
      */
     startViewerTracking() {
         
-        // 주기적으로 시청자 수 업데이트 (20초마다 - 더 자주 체크)
+        // 주기적으로 시청자 수 업데이트 (15초마다 - 더 자주 체크하여 변화 추적)
         this.viewerTrackingInterval = setInterval(async () => {
             if (!this.running) {
                 clearInterval(this.viewerTrackingInterval);
@@ -679,8 +751,11 @@ class ViewBot extends EventEmitter {
                         '--no-sandbox',
                         '--disable-setuid-sandbox',
                         '--disable-dev-shm-usage',
-                        '--disable-blink-features=AutomationControlled'
-                    ]
+                        '--disable-blink-features=AutomationControlled',
+                        '--disable-gpu',
+                        '--disable-software-rasterizer'
+                    ],
+                    timeout: 60000
                 });
                 const page = await browser.newPage();
                 
@@ -688,8 +763,12 @@ class ViewBot extends EventEmitter {
                 await page.setUserAgent(this.getRandomUserAgent());
                 await page.setViewport(this.getRandomViewport());
                 
-                await page.goto(this.url, { waitUntil: 'networkidle0', timeout: 60000 });
-                await this.sleep(8000); // 로드 대기
+                await page.goto(this.url, { 
+                    waitUntil: 'domcontentloaded', 
+                    timeout: 60000 
+                }).catch(() => {});
+                
+                await this.sleep(10000); // 라이브 채팅 로드 대기
                 
                 // 라이브 채팅이 로드될 때까지 대기
                 try {
@@ -710,12 +789,24 @@ class ViewBot extends EventEmitter {
                         this.stats.viewerHistory.shift();
                     }
                     
-                    // 변화량 로그
-                    if (previousCount !== null) {
+                    // 변화량 로그 (더 자세한 정보)
+                    if (previousCount !== null && previousCount > 0) {
                         const change = viewerCount - previousCount;
+                        const changePercent = ((change / previousCount) * 100).toFixed(1);
                         if (Math.abs(change) > 0) {
-                            this.emit('update', { type: 'info', message: `시청자 수 업데이트: ${viewerCount.toLocaleString()}명 (${change >= 0 ? '+' : ''}${change})` });
+                            this.emit('update', { 
+                                type: change > 0 ? 'success' : 'info', 
+                                message: `📊 시청자 수: ${viewerCount.toLocaleString()}명 (${change >= 0 ? '+' : ''}${change}, ${changePercent}%)` 
+                            });
                         }
+                    } else if (previousCount === null && this.stats.initialViewerCount !== null) {
+                        // 초기 시청자 수와 비교
+                        const change = viewerCount - this.stats.initialViewerCount;
+                        const changePercent = ((change / this.stats.initialViewerCount) * 100).toFixed(1);
+                        this.emit('update', { 
+                            type: change > 0 ? 'success' : 'info', 
+                            message: `📊 시청자 수: ${viewerCount.toLocaleString()}명 (시작 대비 ${change >= 0 ? '+' : ''}${change}, ${changePercent}%)` 
+                        });
                     }
                     
                     this.emit('stats', this.stats);
@@ -723,9 +814,9 @@ class ViewBot extends EventEmitter {
                 
                 await browser.close();
             } catch (error) {
-                // 조용히 실패
+                // 조용히 실패 (너무 많은 로그 방지)
             }
-        }, 20000); // 20초마다 업데이트
+        }, 15000); // 15초마다 업데이트 (더 자주 체크)
     }
 
     /**
