@@ -87,16 +87,19 @@ function fetchYouTubeViewerCount(videoId) {
     return fetch(url)
         .then(function (res) {
             return res.json().then(function (data) {
-                return { ok: res.ok, data: data };
+                return { ok: res.ok, status: res.status || 0, data: data };
             }).catch(function () {
-                return { ok: false, data: { viewerCount: null, error: 'API 응답 오류 (status ' + res.status + ')' } };
+                return { ok: false, status: res.status, data: { viewerCount: null, error: 'API 응답 오류 (status ' + res.status + '). 404면 Vercel 배포 설정 확인.' } };
             });
         })
         .then(function (result) {
             var data = result.data;
             var n = data.viewerCount != null ? parseInt(data.viewerCount, 10) : null;
             if (n !== null && (isNaN(n) || n < 0)) n = null;
-            return { viewerCount: n, error: data.error || (result.ok ? null : 'API 오류') };
+            var err = data.error || (result.ok ? null : 'API 오류 (status ' + (result.status || '') + ')');
+            if (result.status === 404) err = (err || '') + ' → Vercel 대시보드에서 api 폴더 배포 여부 확인.';
+            if (result.status === 500 && data.error && data.error.indexOf('YOUTUBE_API_KEY') !== -1) err = (err || '') + ' → Vercel 환경변수 YOUTUBE_API_KEY 추가 후 재배포.';
+            return { viewerCount: n, error: err };
         })
         .catch(function (err) {
             return { viewerCount: null, error: err.message || '요청 실패 (API 라우트 확인)' };
