@@ -78,34 +78,37 @@ function getYouTubeVideoId(url) {
     }
 }
 
-// YouTube Data API v3로 라이브 시청자 수 조회
-function fetchYouTubeViewerCount(videoId, apiKey) {
-    if (!videoId || !apiKey) return Promise.resolve(null);
-    const url = 'https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=' + encodeURIComponent(videoId) + '&key=' + encodeURIComponent(apiKey);
+// 서버 API로 YouTube 라이브 시청자 수 조회 (Vercel 환경변수 YOUTUBE_API_KEY 사용)
+function fetchYouTubeViewerCount(videoId) {
+    if (!videoId) return Promise.resolve({ viewerCount: null, error: null });
+    const url = '/api/youtube-viewers?videoId=' + encodeURIComponent(videoId);
     return fetch(url)
         .then(function (res) { return res.json(); })
         .then(function (data) {
-            const item = data.items && data.items[0];
-            if (!item || !item.liveStreamingDetails) return null;
-            const n = item.liveStreamingDetails.concurrentViewers;
-            return n === undefined ? null : parseInt(n, 10);
+            var n = data.viewerCount != null ? parseInt(data.viewerCount, 10) : null;
+            if (n !== null && (isNaN(n) || n < 0)) n = null;
+            return { viewerCount: n, error: data.error || null };
         })
-        .catch(function () { return null; });
+        .catch(function (err) {
+            return { viewerCount: null, error: err.message || '요청 실패' };
+        });
 }
 
-// 시청자 통계 UI 업데이트
+// 시청자 통계 UI 업데이트 (초기값·현재값·증감 모두 반영)
 function updateViewerStats(initial, current) {
     if (!viewerCountPanel) return;
     viewerCountPanel.style.display = 'block';
-    if (initial != null) {
+    var validInitial = initial != null && !isNaN(initial) && initial >= 0;
+    var validCurrent = current != null && !isNaN(current) && current >= 0;
+    if (validInitial) {
         initialViewerCountEl.textContent = initial.toLocaleString() + '명';
     } else {
         initialViewerCountEl.textContent = '-';
     }
-    if (current != null) {
+    if (validCurrent) {
         currentViewerCountEl.textContent = current.toLocaleString() + '명';
-        if (initial != null) {
-            const change = current - initial;
+        if (validInitial) {
+            var change = current - initial;
             viewerChangeEl.textContent = (change >= 0 ? '+' : '') + change.toLocaleString() + '명';
             viewerChangeEl.style.color = change >= 0 ? '#2ecc71' : '#e74c3c';
         } else {
@@ -151,35 +154,36 @@ function run() {
 
     addLog('success', '시작: ' + url + ' (요청 ' + target + '개, 팝업 없음)');
 
-    // YouTube 시청자 통계 (API 키 있을 때만)
+    // YouTube 시청자 통계 (Vercel 환경변수 YOUTUBE_API_KEY 사용)
     const videoId = getYouTubeVideoId(url);
-    const apiKey = (document.getElementById('youtubeApiKey') && document.getElementById('youtubeApiKey').value) ? document.getElementById('youtubeApiKey').value.trim() : '';
     let initialViewerCount = null;
     let lastViewerCount = null;
 
-    if (videoId && apiKey) {
+    if (videoId) {
         viewerCountPanel.style.display = 'block';
         initialViewerCountEl.textContent = '조회 중...';
         currentViewerCountEl.textContent = '-';
         viewerChangeEl.textContent = '-';
-        fetchYouTubeViewerCount(videoId, apiKey).then(function (n) {
+        fetchYouTubeViewerCount(videoId).then(function (result) {
+            var n = result.viewerCount;
             initialViewerCount = n;
             lastViewerCount = n;
             updateViewerStats(initialViewerCount, lastViewerCount);
             if (n != null) addLog('info', '시작 시청자 수: ' + n.toLocaleString() + '명');
-            else addLog('warning', '시청자 수를 가져올 수 없습니다. 라이브 중인지, API 키 권한을 확인하세요.');
+            else addLog('warning', result.error || '시청자 수를 가져올 수 없습니다. 라이브 중인지, Vercel에 YOUTUBE_API_KEY 설정을 확인하세요.');
+            // 초기값 확정 후에만 주기 폴링 시작 → 증가분이 항상 올바르게 표시됨
+            if (!viewerPollInterval) {
+                viewerPollInterval = setInterval(function () {
+                    if (!isRunning) return;
+                    fetchYouTubeViewerCount(videoId).then(function (res) {
+                        if (res.viewerCount != null) {
+                            lastViewerCount = res.viewerCount;
+                            updateViewerStats(initialViewerCount, lastViewerCount);
+                        }
+                    });
+                }, 15000); // 15초마다 갱신
+            }
         });
-        viewerPollInterval = setInterval(function () {
-            if (!isRunning) return;
-            fetchYouTubeViewerCount(videoId, apiKey).then(function (n) {
-                if (n != null) {
-                    lastViewerCount = n;
-                    updateViewerStats(initialViewerCount, lastViewerCount);
-                }
-            });
-        }, 15000); // 15초마다 갱신
-    } else if (videoId) {
-        viewerCountPanel.style.display = 'none';
     } else {
         viewerCountPanel.style.display = 'none';
     }

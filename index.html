@@ -39,13 +39,8 @@
                         </div>
                     </div>
 
-                    <div class="form-group">
-                        <label for="youtubeApiKey">YouTube API 키 (선택)</label>
-                        <input type="password" id="youtubeApiKey" name="youtubeApiKey" placeholder="시청자 통계 표시용 · Google Cloud에서 발급" autocomplete="off">
-                        <p class="hint-inline">YouTube 라이브 URL일 때만 사용. <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">API 키 발급</a></p>
-                    </div>
-
                     <p class="hint">※ 팝업/탭을 열지 않고, 백그라운드에서 요청만 전송합니다.</p>
+                    <p class="hint">※ YouTube 라이브 URL 입력 시 시청자 수는 Vercel 환경변수 <strong>YOUTUBE_API_KEY</strong>로 조회합니다.</p>
 
                     <div class="button-group">
                         <button type="submit" id="startBtn" class="btn btn-primary">시작</button>
