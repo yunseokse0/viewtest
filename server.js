@@ -110,7 +110,16 @@ io.on('connection', (socket) => {
     });
 });
 
+// Vercel 배포 시 자동으로 PORT 할당, 로컬에서는 3000 사용
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`서버가 http://localhost:${PORT} 에서 실행 중입니다.`);
-});
+
+// Vercel에서는 server.listen을 호출하지 않음 (자동 처리)
+if (process.env.VERCEL) {
+    // Vercel 환경에서는 export만 필요
+    module.exports = app;
+} else {
+    // 로컬 개발 환경
+    server.listen(PORT, () => {
+        console.log(`서버가 http://localhost:${PORT} 에서 실행 중입니다.`);
+    });
+}

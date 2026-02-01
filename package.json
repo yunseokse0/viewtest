@@ -5,7 +5,9 @@
   "main": "viewbot.js",
   "scripts": {
     "start": "node viewbot.js",
-    "server": "node server.js"
+    "server": "node server.js",
+    "build": "echo 'No build step required'",
+    "vercel-build": "echo 'No build step required'"
   },
   "keywords": [
     "selenium",
