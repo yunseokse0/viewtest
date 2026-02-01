@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ViewBot - 웹사이트 접속 시뮬레이션 (프론트 전용)</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🚀 ViewBot</h1>
+            <p class="subtitle">웹사이트 접속 시뮬레이션 · 서버 없이 브라우저만으로 동작</p>
+        </header>
+
+        <div class="main-content">
+            <div class="control-panel">
+                <h2>설정</h2>
+                <form id="botForm">
+                    <div class="form-group">
+                        <label for="url">URL</label>
+                        <input type="text" id="url" name="url" placeholder="https://example.com 또는 URL 붙여넣기" required autocomplete="url">
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="instances">열 탭 수</label>
+                            <input type="number" id="instances" name="instances" value="5" min="1" max="1000" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="minDelay">탭 간 최소 대기 (초)</label>
+                            <input type="number" id="minDelay" name="minDelay" value="2" min="0" max="60" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="maxDelay">탭 간 최대 대기 (초)</label>
+                            <input type="number" id="maxDelay" name="maxDelay" value="5" min="0" max="120" required>
+                        </div>
+                    </div>
+
+                    <p class="hint">※ 브라우저가 팝업을 차단하면 주소창 옆에서 "항상 허용"을 선택해 주세요.</p>
+
+                    <div class="button-group">
+                        <button type="submit" id="startBtn" class="btn btn-primary">시작</button>
+                        <button type="button" id="stopBtn" class="btn btn-danger" disabled>중지</button>
+                    </div>
+                </form>
+            </div>
+
+            <div class="stats-panel">
+                <h2>통계</h2>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">목표 탭 수</div>
+                        <div class="stat-value" id="totalVisits">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">진행 중</div>
+                        <div class="stat-value" id="activeSessions">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">열린 탭</div>
+                        <div class="stat-value" id="completedSessions">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">차단됨</div>
+                        <div class="stat-value" id="failedSessions">0</div>
+                    </div>
+                </div>
+                <div class="runtime">
+                    <div class="stat-label">실행 시간</div>
+                    <div class="stat-value" id="runtime">00:00:00</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="log-panel">
+            <div class="log-header">
+                <h2>로그</h2>
+                <button id="clearLogBtn" class="btn btn-small">지우기</button>
+            </div>
+            <div id="logContainer" class="log-container"></div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
