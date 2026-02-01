@@ -301,10 +301,30 @@ class ViewBot extends EventEmitter {
             
             while (!pageLoaded && retryCount <= maxRetries) {
                 try {
+                    // 네트워크 에러 처리
+                    page.on('error', (error) => {
+                        if (error.message.includes('ERR_SOCKET_NOT_CONNECTED')) {
+                            this.emit('update', { type: 'warning', message: `[인스턴스 ${instanceId}] 네트워크 연결 문제 감지` });
+                        }
+                    });
+                    
                     // YouTube는 load 이벤트를 기다리는 것이 더 안정적
                     await page.goto(this.url, {
                         waitUntil: 'networkidle0', // 네트워크가 완전히 유휴 상태가 될 때까지
                         timeout: 120000, // 120초로 증가
+                    }).catch(async (gotoError) => {
+                        // 소켓 에러 처리
+                        if (gotoError.message.includes('ERR_SOCKET_NOT_CONNECTED') || gotoError.message.includes('net::')) {
+                            this.emit('update', { type: 'warning', message: `[인스턴스 ${instanceId}] 네트워크 연결 오류, 재시도 중...` });
+                            await this.sleep(this.randomDelay(3000, 6000));
+                            // domcontentloaded로 재시도 (더 관대한 옵션)
+                            await page.goto(this.url, {
+                                waitUntil: 'domcontentloaded',
+                                timeout: 90000
+                            });
+                        } else {
+                            throw gotoError;
+                        }
                     });
                     
                     // 페이지가 실제로 로드되었는지 확인
@@ -324,6 +344,8 @@ class ViewBot extends EventEmitter {
                     if (retryCount <= maxRetries) {
                         const errorMsg = error.message.includes('timeout') 
                             ? '타임아웃' 
+                            : error.message.includes('ERR_SOCKET_NOT_CONNECTED') || error.message.includes('net::')
+                            ? '네트워크 연결 오류'
                             : error.message.substring(0, 50);
                         this.emit('update', { type: 'warning', message: `[인스턴스 ${instanceId}] 재시도 중... (${retryCount}/${maxRetries}) - ${errorMsg}` });
                         await this.sleep(this.randomDelay(5000, 10000)); // 재시도 전 더 긴 대기
@@ -512,13 +534,19 @@ class ViewBot extends EventEmitter {
         this.stats.currentViewerCount = null;
         this.stats.viewerHistory = [];
         
-        // YouTube인 경우 초기 시청자 수 확인 및 추적 시작
+        this.emit('update', { type: 'info', message: `ViewBot 시작: ${this.url}` });
+        this.emit('update', { type: 'info', message: `동시 실행 인스턴스 수: ${this.numInstances}` });
+        
+        // YouTube인 경우 먼저 초기 시청자 수 확인 (작업 시작 전)
         if (this.url.includes('youtube.com') || this.url.includes('youtu.be')) {
+            this.emit('update', { type: 'info', message: '초기 시청자 수 확인 중...' });
+            await this.getInitialViewerCount(); // 먼저 초기 시청자 수 확인 완료 대기
+            this.emit('stats', this.stats);
+            
+            // 초기 시청자 수 확인 후 추적 시작
             this.startViewerTracking();
         }
         
-        this.emit('update', { type: 'info', message: `ViewBot 시작: ${this.url}` });
-        this.emit('update', { type: 'info', message: `동시 실행 인스턴스 수: ${this.numInstances}` });
         this.emit('stats', this.stats);
 
         // 배치 처리: 한번에 너무 많은 인스턴스를 실행하지 않도록 제한
@@ -547,19 +575,22 @@ class ViewBot extends EventEmitter {
     }
 
     /**
-     * 시청자 수 추적 시작 (고급 모드)
+     * 초기 시청자 수 확인 (작업 시작 전)
      */
-    async startViewerTracking() {
-        // 초기 시청자 수 확인
+    async getInitialViewerCount() {
+        let browser = null;
         try {
-            const browser = await puppeteer.launch({
+            browser = await puppeteer.launch({
                 headless: true,
                 args: [
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
                     '--disable-dev-shm-usage',
-                    '--disable-blink-features=AutomationControlled'
-                ]
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-gpu',
+                    '--disable-software-rasterizer'
+                ],
+                timeout: 60000
             });
             const page = await browser.newPage();
             
@@ -567,8 +598,29 @@ class ViewBot extends EventEmitter {
             await page.setUserAgent(this.getRandomUserAgent());
             await page.setViewport(this.getRandomViewport());
             
-            await page.goto(this.url, { waitUntil: 'networkidle0', timeout: 60000 });
-            await this.sleep(10000); // 페이지 완전 로드 대기 (라이브 채팅 로드 시간 고려)
+            // 네트워크 에러 처리
+            page.on('error', (error) => {
+                this.emit('update', { type: 'warning', message: `페이지 에러: ${error.message}` });
+            });
+            
+            await page.goto(this.url, { 
+                waitUntil: 'networkidle0', 
+                timeout: 60000 
+            }).catch(async (error) => {
+                // 네트워크 에러 시 재시도
+                if (error.message.includes('ERR_SOCKET_NOT_CONNECTED') || error.message.includes('net::')) {
+                    this.emit('update', { type: 'warning', message: '네트워크 연결 문제, 재시도 중...' });
+                    await this.sleep(3000);
+                    await page.goto(this.url, { 
+                        waitUntil: 'domcontentloaded', 
+                        timeout: 60000 
+                    });
+                } else {
+                    throw error;
+                }
+            });
+            
+            await this.sleep(10000); // 페이지 완전 로드 대기
             
             // 라이브 채팅이 로드될 때까지 대기
             try {
@@ -586,15 +638,32 @@ class ViewBot extends EventEmitter {
                     count: viewerCount
                 });
                 this.emit('update', { type: 'success', message: `✅ 초기 시청자 수 확인: ${viewerCount.toLocaleString()}명` });
-                this.emit('stats', this.stats);
+                return viewerCount;
             } else {
                 this.emit('update', { type: 'warning', message: '⚠️ 초기 시청자 수를 확인할 수 없습니다. 라이브 스트림인지 확인하세요.' });
+                return null;
             }
-            
-            await browser.close();
         } catch (error) {
-            this.emit('update', { type: 'warning', message: `시청자 수 확인 실패: ${error.message}` });
+            const errorMsg = error.message.includes('ERR_SOCKET_NOT_CONNECTED') || error.message.includes('net::')
+                ? '네트워크 연결 오류'
+                : error.message;
+            this.emit('update', { type: 'warning', message: `시청자 수 확인 실패: ${errorMsg}` });
+            return null;
+        } finally {
+            if (browser) {
+                try {
+                    await browser.close();
+                } catch (e) {
+                    // 무시
+                }
+            }
         }
+    }
+
+    /**
+     * 시청자 수 추적 시작 (주기적 업데이트)
+     */
+    startViewerTracking() {
         
         // 주기적으로 시청자 수 업데이트 (20초마다 - 더 자주 체크)
         this.viewerTrackingInterval = setInterval(async () => {
