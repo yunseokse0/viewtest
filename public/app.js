@@ -1,5 +1,7 @@
-// Socket.io 연결
-const socket = io();
+/**
+ * ViewBot - 프론트엔드 전용 (서버 없음)
+ * URL을 설정한 만큼 새 탭으로 열어 접속을 시뮬레이션합니다.
+ */
 
 // DOM 요소
 const botForm = document.getElementById('botForm');
@@ -8,26 +10,18 @@ const stopBtn = document.getElementById('stopBtn');
 const clearLogBtn = document.getElementById('clearLogBtn');
 const logContainer = document.getElementById('logContainer');
 
-// 통계 요소
 const totalVisitsEl = document.getElementById('totalVisits');
 const activeSessionsEl = document.getElementById('activeSessions');
 const completedSessionsEl = document.getElementById('completedSessions');
 const failedSessionsEl = document.getElementById('failedSessions');
 const runtimeEl = document.getElementById('runtime');
 
-// 시청자 수 요소
-const viewerCountPanel = document.getElementById('viewerCountPanel');
-const initialViewerCountEl = document.getElementById('initialViewerCount');
-const currentViewerCountEl = document.getElementById('currentViewerCount');
-const viewerChangeEl = document.getElementById('viewerChange');
-const viewerChartCanvas = document.getElementById('viewerChart');
-
 let startTime = null;
 let runtimeInterval = null;
-let viewerChart = null;
-let currentUrl = '';
+let isRunning = false;
+let timeouts = []; // 중지 시 clearTimeout용
 
-// 시간 포맷팅
+// 시간 포맷 (초 → HH:MM:SS)
 function formatTime(seconds) {
     const hrs = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
@@ -35,7 +29,6 @@ function formatTime(seconds) {
     return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 }
 
-// 런타임 업데이트
 function updateRuntime() {
     if (startTime) {
         const elapsed = Math.floor((new Date() - startTime) / 1000);
@@ -43,276 +36,147 @@ function updateRuntime() {
     }
 }
 
-// 로그 추가
 function addLog(type, message) {
     const logEntry = document.createElement('div');
     logEntry.className = `log-entry ${type}`;
-    
     const time = new Date().toLocaleTimeString('ko-KR');
     logEntry.innerHTML = `<span class="log-time">[${time}]</span>${message}`;
-    
     logContainer.appendChild(logEntry);
     logContainer.scrollTop = logContainer.scrollHeight;
 }
 
-// 통계 업데이트
-function updateStats(stats) {
-    totalVisitsEl.textContent = stats.totalVisits || 0;
-    activeSessionsEl.textContent = stats.activeSessions || 0;
-    completedSessionsEl.textContent = stats.completedSessions || 0;
-    failedSessionsEl.textContent = stats.failedSessions || 0;
-    
-    if (stats.startTime && !startTime) {
-        startTime = new Date(stats.startTime);
-        runtimeInterval = setInterval(updateRuntime, 1000);
-    }
-    
-    // YouTube 시청자 수 업데이트
-    if (currentUrl && (currentUrl.includes('youtube.com') || currentUrl.includes('youtu.be'))) {
-        updateViewerStats(stats);
-    }
+function updateStats(opened, pending, blocked) {
+    const target = parseInt(document.getElementById('instances').value) || 0;
+    totalVisitsEl.textContent = target;
+    activeSessionsEl.textContent = pending;
+    completedSessionsEl.textContent = opened;
+    failedSessionsEl.textContent = blocked;
 }
 
-// 시청자 수 통계 업데이트
-function updateViewerStats(stats) {
-    if (stats.initialViewerCount !== null || stats.currentViewerCount !== null) {
-        viewerCountPanel.style.display = 'block';
-        
-        if (stats.initialViewerCount !== null) {
-            initialViewerCountEl.textContent = stats.initialViewerCount.toLocaleString() + '명';
-        }
-        
-        if (stats.currentViewerCount !== null) {
-            currentViewerCountEl.textContent = stats.currentViewerCount.toLocaleString() + '명';
-            
-            // 변화량 계산
-            if (stats.initialViewerCount !== null) {
-                const change = stats.currentViewerCount - stats.initialViewerCount;
-                viewerChangeEl.textContent = (change >= 0 ? '+' : '') + change.toLocaleString() + '명';
-                viewerChangeEl.style.color = change >= 0 ? '#2ecc71' : '#e74c3c';
-            }
-        }
-        
-        // 그래프 업데이트
-        if (stats.viewerHistory && stats.viewerHistory.length > 0) {
-            updateViewerChart(stats.viewerHistory, stats.initialViewerCount);
-        }
-    }
+// 랜덤 지연 (초 → 밀리초)
+function randomDelaySec(minSec, maxSec) {
+    const min = Math.min(minSec, maxSec) * 1000;
+    const max = Math.max(minSec, maxSec) * 1000;
+    return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-// 시청자 수 그래프 업데이트
-function updateViewerChart(history, initialCount) {
-    if (!viewerChart) {
-        const ctx = viewerChartCanvas.getContext('2d');
-        viewerChart = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: [],
-                datasets: [{
-                    label: '시청자 수',
-                    data: [],
-                    borderColor: '#ffffff',
-                    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-                    tension: 0.4,
-                    fill: true,
-                    borderWidth: 2
-                }, {
-                    label: '시작 시청자 수',
-                    data: [],
-                    borderColor: '#606060',
-                    borderDash: [5, 5],
-                    borderWidth: 1,
-                    pointRadius: 0
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        display: true,
-                        position: 'top',
-                        labels: {
-                            color: '#d0d0d0'
-                        }
-                    },
-                    tooltip: {
-                        mode: 'index',
-                        intersect: false,
-                        backgroundColor: '#2a2a2a',
-                        titleColor: '#ffffff',
-                        bodyColor: '#d0d0d0',
-                        borderColor: '#404040',
-                        borderWidth: 1
-                    }
-                },
-                scales: {
-                    x: {
-                        ticks: {
-                            color: '#a0a0a0'
-                        },
-                        grid: {
-                            color: '#3a3a3a'
-                        }
-                    },
-                    y: {
-                        beginAtZero: false,
-                        ticks: {
-                            color: '#a0a0a0',
-                            callback: function(value) {
-                                return value.toLocaleString() + '명';
-                            }
-                        },
-                        grid: {
-                            color: '#3a3a3a'
-                        }
-                    }
-                }
-            }
-        });
+function run() {
+    let url = document.getElementById('url').value.trim();
+    if (url && !/^https?:\/\//i.test(url)) {
+        url = 'https://' + url;
     }
-    
-    const labels = history.map((item, index) => {
-        const date = new Date(item.time);
-        return date.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    });
-    
-    const data = history.map(item => item.count);
-    const baseline = new Array(history.length).fill(initialCount || 0);
-    
-    viewerChart.data.labels = labels;
-    viewerChart.data.datasets[0].data = data;
-    viewerChart.data.datasets[1].data = baseline;
-    viewerChart.update('none'); // 애니메이션 없이 업데이트
-}
+    if (!url) {
+        addLog('error', 'URL을 입력하거나 붙여넣기 해주세요.');
+        return;
+    }
+    document.getElementById('url').value = url;
 
-// 봇 시작
-botForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    
     let instances = parseInt(document.getElementById('instances').value);
-    instances = Math.min(Math.max(instances, 1), 300); // 1~300 사이로 제한
-    
-    const url = document.getElementById('url').value;
-    currentUrl = url;
-    
-    // YouTube URL인지 확인하여 시청자 수 패널 표시
-    if (url.includes('youtube.com') || url.includes('youtu.be')) {
-        viewerCountPanel.style.display = 'block';
-        // 그래프 초기화
-        if (viewerChart) {
-            viewerChart.destroy();
-            viewerChart = null;
-        }
-    } else {
-        viewerCountPanel.style.display = 'none';
-    }
-    
-    const formData = {
-        url: url,
-        instances: instances,
-        minDelay: document.getElementById('minDelay').value * 1000, // 초를 밀리초로 변환
-        maxDelay: document.getElementById('maxDelay').value * 1000,
-        headless: document.getElementById('headless').checked
-    };
-    
-    try {
-        const response = await fetch('/api/start', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(formData)
-        });
-        
-        const data = await response.json();
-        
-        if (response.ok) {
-            startBtn.disabled = true;
-            stopBtn.disabled = false;
-            botForm.querySelectorAll('input').forEach(input => {
-                if (input.type !== 'checkbox') input.disabled = true;
-            });
-            addLog('success', '봇이 시작되었습니다.');
-            startTime = new Date();
-            runtimeInterval = setInterval(updateRuntime, 1000);
-        } else {
-            addLog('error', data.error || '봇 시작 실패');
-        }
-    } catch (error) {
-        addLog('error', `오류: ${error.message}`);
-    }
-});
+    instances = Math.min(Math.max(instances, 1), 1000);
 
-// 봇 중지
-stopBtn.addEventListener('click', async () => {
-    try {
-        const response = await fetch('/api/stop', {
-            method: 'POST'
-        });
-        
-        const data = await response.json();
-        addLog('warning', data.message || '봇이 중지되었습니다.');
-        
+    const minDelay = parseInt(document.getElementById('minDelay').value) || 0;
+    const maxDelay = Math.max(parseInt(document.getElementById('maxDelay').value) || 0, minDelay);
+
+    isRunning = true;
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+    botForm.querySelectorAll('input').forEach(function (input) {
+        if (input.type !== 'checkbox') input.disabled = true;
+    });
+
+    startTime = new Date();
+    runtimeInterval = setInterval(updateRuntime, 1000);
+    timeouts = [];
+
+    let opened = 0;
+    let blocked = 0;
+    const target = instances;
+
+    addLog('success', '시작: ' + url + ' (탭 ' + target + '개)');
+
+    function openOne(index) {
+        if (!isRunning) return;
+
+        const w = window.open(url, '_blank', 'noopener,noreferrer');
+        if (w) {
+            opened++;
+            addLog('success', '탭 #' + (index + 1) + ' 열림');
+        } else {
+            blocked++;
+            addLog('warning', '탭 #' + (index + 1) + ' 차단됨 (팝업 허용 후 다시 시도)');
+        }
+
+        updateStats(opened, target - opened - blocked, blocked);
+
+        if (opened + blocked >= target) {
+            finish();
+            return;
+        }
+
+        const nextIndex = index + 1;
+        const delay = randomDelaySec(minDelay, maxDelay);
+        const t = setTimeout(function () {
+            openOne(nextIndex);
+        }, delay);
+        timeouts.push(t);
+    }
+
+    function finish() {
+        isRunning = false;
+        timeouts.forEach(clearTimeout);
+        timeouts = [];
         if (runtimeInterval) {
             clearInterval(runtimeInterval);
             runtimeInterval = null;
         }
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+        botForm.querySelectorAll('input').forEach(function (input) {
+            input.disabled = false;
+        });
+        addLog('success', '완료: 열린 탭 ' + opened + '개' + (blocked ? ', 차단 ' + blocked + '개' : ''));
+        runtimeEl.textContent = formatTime(Math.floor((new Date() - startTime) / 1000));
         startTime = null;
-    } catch (error) {
-        addLog('error', `오류: ${error.message}`);
     }
+
+    updateStats(0, target, 0);
+
+    if (instances > 0) {
+        openOne(0);
+    } else {
+        finish();
+    }
+}
+
+botForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    run();
 });
 
-// 로그 지우기
-clearLogBtn.addEventListener('click', () => {
-    logContainer.innerHTML = '';
-});
-
-// Socket.io 이벤트 리스너
-socket.on('update', (data) => {
-    addLog(data.type || 'log', data.message);
-});
-
-socket.on('stats', (stats) => {
-    updateStats(stats);
-});
-
-socket.on('complete', () => {
-    addLog('success', '모든 세션이 완료되었습니다.');
-    startBtn.disabled = false;
-    stopBtn.disabled = true;
-    botForm.querySelectorAll('input').forEach(input => {
-        input.disabled = false;
-    });
-    
+stopBtn.addEventListener('click', function () {
+    if (!isRunning) return;
+    isRunning = false;
+    timeouts.forEach(clearTimeout);
+    timeouts = [];
     if (runtimeInterval) {
         clearInterval(runtimeInterval);
         runtimeInterval = null;
     }
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+    botForm.querySelectorAll('input').forEach(function (input) {
+        input.disabled = false;
+    });
+    addLog('warning', '사용자가 중지했습니다.');
+    if (startTime) {
+        runtimeEl.textContent = formatTime(Math.floor((new Date() - startTime) / 1000));
+    }
     startTime = null;
-    runtimeEl.textContent = '00:00:00';
 });
 
-// 페이지 로드 시 상태 확인
-window.addEventListener('load', async () => {
-    try {
-        const response = await fetch('/api/status');
-        const data = await response.json();
-        
-        if (data.running) {
-            startBtn.disabled = true;
-            stopBtn.disabled = false;
-            botForm.querySelectorAll('input').forEach(input => {
-                if (input.type !== 'checkbox') input.disabled = true;
-            });
-            updateStats(data.stats);
-            if (data.stats.startTime) {
-                startTime = new Date(data.stats.startTime);
-                runtimeInterval = setInterval(updateRuntime, 1000);
-            }
-        }
-    } catch (error) {
-        console.error('상태 확인 실패:', error);
-    }
+clearLogBtn.addEventListener('click', function () {
+    logContainer.innerHTML = '';
 });
+
+// 초기 통계
+updateStats(0, 0, 0);

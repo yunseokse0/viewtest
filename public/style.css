@@ -78,6 +78,7 @@ header h1 {
     color: #d0d0d0;
 }
 
+.form-group input[type="text"],
 .form-group input[type="url"],
 .form-group input[type="number"] {
     width: 100%;
@@ -120,6 +121,13 @@ header h1 {
     height: 20px;
     margin-right: 10px;
     cursor: pointer;
+}
+
+.hint {
+    font-size: 0.85em;
+    color: #95a5a6;
+    margin-bottom: 15px;
+    line-height: 1.4;
 }
 
 .button-group {

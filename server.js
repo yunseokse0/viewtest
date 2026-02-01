@@ -26,10 +26,15 @@ app.get('/', (req, res) => {
 
 // 봇 시작 API
 app.post('/api/start', (req, res) => {
-    const { url, instances, minDelay, maxDelay, headless } = req.body;
+    let { url, instances, minDelay, maxDelay, headless } = req.body;
+    url = (url && typeof url === 'string') ? url.trim() : '';
 
     if (!url) {
-        return res.status(400).json({ error: 'URL이 필요합니다.' });
+        return res.status(400).json({ error: 'URL을 입력하거나 붙여넣기 해주세요.' });
+    }
+    // 프로토콜 없으면 https:// 추가
+    if (!/^https?:\/\//i.test(url)) {
+        url = 'https://' + url;
     }
 
     if (currentBot && currentBot.running) {
