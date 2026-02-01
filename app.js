@@ -97,7 +97,6 @@ function fetchYouTubeViewerCount(videoId) {
 // 시청자 통계 UI 업데이트 (초기값·현재값·증감 모두 반영)
 function updateViewerStats(initial, current) {
     if (!viewerCountPanel) return;
-    viewerCountPanel.style.display = 'block';
     var validInitial = initial != null && !isNaN(initial) && initial >= 0;
     var validCurrent = current != null && !isNaN(current) && current >= 0;
     if (validInitial) {
@@ -160,7 +159,6 @@ function run() {
     let lastViewerCount = null;
 
     if (videoId) {
-        viewerCountPanel.style.display = 'block';
         initialViewerCountEl.textContent = '조회 중...';
         currentViewerCountEl.textContent = '-';
         viewerChangeEl.textContent = '-';
@@ -184,25 +182,31 @@ function run() {
                 }, 15000); // 15초마다 갱신
             }
         });
-    } else {
-        viewerCountPanel.style.display = 'none';
     }
 
     function sendOne(index) {
         if (!isRunning) return;
 
-        fetch(url, { method: 'GET', mode: 'no-cors', credentials: 'omit' })
-            .then(function () {
+        fetch(url, { method: 'GET', credentials: 'omit' })
+            .then(function (res) {
+                return { ok: res.ok, status: res.status };
+            })
+            .then(function (info) {
                 if (!isRunning) return;
                 opened++;
-                addLog('success', '요청 #' + (index + 1) + ' 전송됨');
+                if (info.ok) {
+                    addLog('success', '요청 #' + (index + 1) + ' 성공 (' + info.status + ')');
+                } else {
+                    addLog('warning', '요청 #' + (index + 1) + ' 응답 ' + info.status);
+                }
                 updateStats(opened, target - opened - blocked, blocked);
                 scheduleNext(index);
             })
-            .catch(function () {
+            .catch(function (err) {
                 if (!isRunning) return;
                 blocked++;
-                addLog('warning', '요청 #' + (index + 1) + ' 실패 (CORS/네트워크)');
+                var msg = err && err.message ? err.message : 'CORS/네트워크';
+                addLog('warning', '요청 #' + (index + 1) + ' 실패: ' + msg);
                 updateStats(opened, target - opened - blocked, blocked);
                 scheduleNext(index);
             });
