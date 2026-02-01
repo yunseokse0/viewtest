@@ -6,10 +6,10 @@
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: #1a1a1a;
     min-height: 100vh;
     padding: 20px;
-    color: #333;
+    color: #e0e0e0;
 }
 
 .container {
@@ -19,19 +19,22 @@ body {
 
 header {
     text-align: center;
-    color: white;
+    color: #ffffff;
     margin-bottom: 30px;
 }
 
 header h1 {
     font-size: 2.5em;
     margin-bottom: 10px;
-    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
+    color: #ffffff;
+    font-weight: 300;
+    letter-spacing: -0.5px;
 }
 
 .subtitle {
     font-size: 1.1em;
-    opacity: 0.9;
+    opacity: 0.7;
+    color: #b0b0b0;
 }
 
 .main-content {
@@ -49,17 +52,19 @@ header h1 {
 
 .control-panel,
 .stats-panel {
-    background: white;
+    background: #2a2a2a;
     border-radius: 12px;
     padding: 25px;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+    border: 1px solid #3a3a3a;
 }
 
 .control-panel h2,
 .stats-panel h2 {
     margin-bottom: 20px;
-    color: #667eea;
+    color: #ffffff;
     font-size: 1.5em;
+    font-weight: 400;
 }
 
 .form-group {
@@ -69,23 +74,26 @@ header h1 {
 .form-group label {
     display: block;
     margin-bottom: 8px;
-    font-weight: 600;
-    color: #555;
+    font-weight: 500;
+    color: #d0d0d0;
 }
 
 .form-group input[type="url"],
 .form-group input[type="number"] {
     width: 100%;
     padding: 12px;
-    border: 2px solid #e0e0e0;
+    border: 1px solid #404040;
     border-radius: 8px;
     font-size: 1em;
-    transition: border-color 0.3s;
+    transition: all 0.3s;
+    background: #1a1a1a;
+    color: #e0e0e0;
 }
 
 .form-group input:focus {
     outline: none;
-    border-color: #667eea;
+    border-color: #606060;
+    background: #222222;
 }
 
 .form-row {
@@ -137,24 +145,27 @@ header h1 {
 }
 
 .btn-primary {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
+    background: #404040;
+    color: #ffffff;
+    border: 1px solid #505050;
 }
 
 .btn-primary:hover:not(:disabled) {
+    background: #505050;
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 
 .btn-danger {
-    background: #e74c3c;
-    color: white;
+    background: #3a3a3a;
+    color: #ffffff;
+    border: 1px solid #505050;
 }
 
 .btn-danger:hover:not(:disabled) {
-    background: #c0392b;
+    background: #4a4a4a;
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(231, 76, 60, 0.4);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 
 .btn-small {
@@ -176,36 +187,88 @@ header h1 {
 }
 
 .stat-card {
-    background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+    background: #1a1a1a;
     padding: 20px;
     border-radius: 8px;
     text-align: center;
+    border: 1px solid #3a3a3a;
 }
 
 .stat-label {
     font-size: 0.9em;
-    color: #666;
+    color: #a0a0a0;
     margin-bottom: 8px;
 }
 
 .stat-value {
     font-size: 2em;
-    font-weight: bold;
-    color: #667eea;
+    font-weight: 300;
+    color: #ffffff;
 }
 
 .runtime {
-    background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+    background: #1a1a1a;
     padding: 20px;
     border-radius: 8px;
     text-align: center;
+    margin-top: 15px;
+    border: 1px solid #3a3a3a;
+}
+
+.viewer-count-panel {
+    margin-top: 20px;
+    padding: 20px;
+    background: #1a1a1a;
+    border-radius: 8px;
+    border: 1px solid #3a3a3a;
+}
+
+.viewer-count-panel h3 {
+    margin-bottom: 15px;
+    color: #ffffff;
+    font-size: 1.2em;
+    font-weight: 400;
+}
+
+.viewer-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+.viewer-stat-item {
+    background: #2a2a2a;
+    padding: 15px;
+    border-radius: 8px;
+    text-align: center;
+    border: 1px solid #3a3a3a;
+}
+
+.viewer-stat-item .stat-label {
+    font-size: 0.9em;
+    color: #a0a0a0;
+    margin-bottom: 8px;
+}
+
+.viewer-stat-item .stat-value {
+    font-size: 1.5em;
+    font-weight: 300;
+    color: #ffffff;
+}
+
+.chart-container {
+    position: relative;
+    height: 300px;
+    margin-top: 20px;
 }
 
 .log-panel {
-    background: white;
+    background: #2a2a2a;
     border-radius: 12px;
     padding: 25px;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+    border: 1px solid #3a3a3a;
 }
 
 .log-header {
@@ -216,8 +279,9 @@ header h1 {
 }
 
 .log-header h2 {
-    color: #667eea;
+    color: #ffffff;
     font-size: 1.5em;
+    font-weight: 400;
 }
 
 .log-container {

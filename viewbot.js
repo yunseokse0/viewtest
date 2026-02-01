@@ -20,7 +20,10 @@ class ViewBot extends EventEmitter {
             activeSessions: 0,
             completedSessions: 0,
             failedSessions: 0,
-            startTime: null
+            startTime: null,
+            initialViewerCount: null,
+            currentViewerCount: null,
+            viewerHistory: [] // 시청자 수 히스토리
         };
     }
 
@@ -58,16 +61,16 @@ class ViewBot extends EventEmitter {
     }
 
     /**
-     * 자연스러운 스크롤 시뮬레이션
+     * 자연스러운 스크롤 시뮬레이션 (리소스 절약 버전)
      */
     async simulateScrolling(page) {
-        const scrollCount = this.randomDelay(2, 5);
+        const scrollCount = this.randomDelay(2, 4); // 스크롤 횟수 감소
         for (let i = 0; i < scrollCount; i++) {
-            const scrollAmount = this.randomDelay(300, 800);
+            const scrollAmount = this.randomDelay(300, 600); // 스크롤 거리 감소
             await page.evaluate((amount) => {
                 window.scrollBy(0, amount);
             }, scrollAmount);
-            await this.sleep(this.randomDelay(1000, 3000));
+            await this.sleep(this.randomDelay(1500, 2500)); // 대기 시간 단축
         }
     }
 
@@ -76,6 +79,158 @@ class ViewBot extends EventEmitter {
      */
     sleep(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    /**
+     * YouTube 시청자 수 추출 (개선된 버전)
+     */
+    async extractViewerCount(page) {
+        try {
+            // 페이지가 완전히 로드될 때까지 대기
+            await page.waitForTimeout(8000); // 더 긴 대기로 페이지 완전 로드 보장
+            
+            const viewerCount = await page.evaluate(() => {
+                // 디버깅: 페이지 텍스트 일부 확인
+                const pageText = document.body.innerText || document.body.textContent || '';
+                
+                // 방법 0: YouTube 라이브 스트림의 정확한 위치 찾기
+                // 라이브 채팅 패널이나 시청자 수 표시 영역 찾기
+                const liveChatPanel = document.querySelector('yt-live-chat-app, #chat, #chatframe');
+                if (liveChatPanel) {
+                    const chatText = liveChatPanel.innerText || '';
+                    const viewerMatch = chatText.match(/(\d{1,3}(?:,\d{3})*|\d+)\s*(?:명\s*)?(?:시청|viewers?|watching)/i);
+                    if (viewerMatch) {
+                        const num = parseInt(viewerMatch[1].replace(/,/g, ''));
+                        if (num > 0 && num < 10000000) {
+                            return num;
+                        }
+                    }
+                }
+                
+                // 방법 1: YouTube 라이브 채팅의 시청자 수 요소 찾기 (더 정확한 선택자)
+                const liveChatSelectors = [
+                    'yt-live-chat-viewer-engagement-message-renderer',
+                    'yt-live-chat-item-list-renderer',
+                    '[class*="viewer-engagement"]',
+                    '[class*="viewer-count"]',
+                    'yt-formatted-string[class*="viewer"]',
+                    'span[class*="viewer"]',
+                    '#viewer-count',
+                    '[id*="viewer-count"]'
+                ];
+                
+                for (const selector of liveChatSelectors) {
+                    try {
+                        const elements = document.querySelectorAll(selector);
+                        for (const element of elements) {
+                            const text = element.innerText || element.textContent || '';
+                            // "109명 시청" 또는 "109 viewers" 패턴 찾기
+                            const match = text.match(/(\d{1,3}(?:,\d{3})*|\d+)\s*(?:명\s*)?(?:시청|viewers?|watching)/i);
+                            if (match) {
+                                const num = parseInt(match[1].replace(/,/g, ''));
+                                if (num >= 1 && num < 10000000) { // 합리적인 범위
+                                    return num;
+                                }
+                            }
+                        }
+                    } catch (e) {}
+                }
+                
+                // 방법 2: 페이지 전체 텍스트에서 시청자 수 찾기 (더 정확한 패턴)
+                const allText = document.body.innerText || document.body.textContent || '';
+                
+                // 한국어 패턴: "109명 시청", "109 명 시청", "시청 109명" 등
+                const koreanPatterns = [
+                    /(\d{1,3}(?:,\d{3})*|\d+)\s*명\s*시청/i,
+                    /시청\s*(\d{1,3}(?:,\d{3})*|\d+)\s*명/i,
+                    /(\d{1,3}(?:,\d{3})*|\d+)\s*명\s*현재\s*시청/i,
+                    /현재\s*(\d{1,3}(?:,\d{3})*|\d+)\s*명/i
+                ];
+                
+                for (const pattern of koreanPatterns) {
+                    const match = allText.match(pattern);
+                    if (match) {
+                        const num = parseInt(match[1].replace(/,/g, ''));
+                        if (num > 0 && num < 10000000) {
+                            return num;
+                        }
+                    }
+                }
+                
+                // 영어 패턴: "109 viewers", "109 watching", "watching 109" 등
+                const englishPatterns = [
+                    /(\d{1,3}(?:,\d{3})*|\d+)\s*viewers?/i,
+                    /(\d{1,3}(?:,\d{3})*|\d+)\s*watching/i,
+                    /watching\s*(\d{1,3}(?:,\d{3})*|\d+)/i,
+                    /(\d{1,3}(?:,\d{3})*|\d+)\s*people\s*watching/i
+                ];
+                
+                for (const pattern of englishPatterns) {
+                    const match = allText.match(pattern);
+                    if (match) {
+                        const num = parseInt(match[1].replace(/,/g, ''));
+                        if (num > 0 && num < 10000000) {
+                            return num;
+                        }
+                    }
+                }
+                
+                // 방법 3: aria-label에서 찾기
+                const ariaElements = document.querySelectorAll('[aria-label]');
+                for (const elem of ariaElements) {
+                    const ariaLabel = elem.getAttribute('aria-label') || '';
+                    const match = ariaLabel.match(/(\d{1,3}(?:,\d{3})*|\d+)\s*(?:명\s*)?(?:시청|viewers?|watching)/i);
+                    if (match) {
+                        const num = parseInt(match[1].replace(/,/g, ''));
+                        if (num > 0 && num < 10000000) {
+                            return num;
+                        }
+                    }
+                }
+                
+                // 방법 4: 모든 숫자 찾아서 시청자 수로 보이는 것 찾기 (개선)
+                const numberMatches = allText.match(/\b(\d{1,6})\b/g);
+                if (numberMatches) {
+                    // 큰 숫자 중에서 시청자 수일 가능성이 높은 것 찾기
+                    const candidates = numberMatches
+                        .map(m => parseInt(m.replace(/,/g, '')))
+                        .filter(n => n >= 1 && n < 10000000)
+                        .sort((a, b) => b - a); // 큰 수부터
+                    
+                    // "시청", "viewer" 등의 키워드와 가까운 숫자 찾기
+                    for (const num of candidates) {
+                        const numStr = num.toString();
+                        const index = allText.indexOf(numStr);
+                        if (index !== -1) {
+                            const context = allText.substring(Math.max(0, index - 30), Math.min(allText.length, index + 60));
+                            // 더 정확한 패턴 매칭
+                            if (/시청|viewer|watching|명|현재|current/i.test(context)) {
+                                // 숫자 앞뒤로 키워드가 있는지 확인
+                                const beforeContext = allText.substring(Math.max(0, index - 15), index);
+                                const afterContext = allText.substring(index + numStr.length, Math.min(allText.length, index + numStr.length + 15));
+                                if (/시청|viewer|watching|명/i.test(beforeContext + afterContext)) {
+                                    return num;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                return null;
+            });
+            
+            // 디버깅: 추출된 값 로그
+            if (viewerCount !== null) {
+                this.emit('update', { type: 'info', message: `시청자 수 추출 성공: ${viewerCount}명` });
+            } else {
+                this.emit('update', { type: 'warning', message: '시청자 수를 찾을 수 없습니다. 페이지 구조를 확인하세요.' });
+            }
+            
+            return viewerCount;
+        } catch (error) {
+            console.error('시청자 수 추출 오류:', error);
+            return null;
+        }
     }
 
     /**
@@ -102,8 +257,22 @@ class ViewBot extends EventEmitter {
                     '--disable-background-timer-throttling',
                     '--disable-renderer-backgrounding',
                     '--disable-backgrounding-occluded-windows',
+                    '--disable-images', // 이미지 로드 비활성화 (메모리 절약)
+                    '--disable-javascript-harmony-shipping',
+                    '--disable-ipc-flooding-protection',
+                    '--disable-hang-monitor',
+                    '--disable-prompt-on-repost',
+                    '--disable-domain-reliability',
+                    '--disable-component-update',
+                    '--disable-sync',
+                    '--disable-translate',
+                    '--disable-features=TranslateUI',
+                    '--disable-features=BlinkGenPropertyTrees',
+                    '--memory-pressure-off', // 메모리 압력 해제
+                    '--max_old_space_size=512', // 메모리 제한
                 ],
-                timeout: 90000, // 브라우저 시작 타임아웃 증가
+                timeout: 90000,
+                protocolTimeout: 120000,
             });
 
             const page = await browser.newPage();
@@ -132,27 +301,32 @@ class ViewBot extends EventEmitter {
             
             while (!pageLoaded && retryCount <= maxRetries) {
                 try {
-                    // domcontentloaded는 더 빠르고 안정적 (YouTube에 적합)
+                    // YouTube는 load 이벤트를 기다리는 것이 더 안정적
                     await page.goto(this.url, {
-                        waitUntil: 'domcontentloaded', // DOM만 로드되면 성공으로 간주
-                        timeout: 90000, // 90초로 증가 (YouTube는 로딩이 오래 걸림)
+                        waitUntil: 'networkidle0', // 네트워크가 완전히 유휴 상태가 될 때까지
+                        timeout: 120000, // 120초로 증가
                     });
                     
                     // 페이지가 실제로 로드되었는지 확인
                     await page.waitForFunction(
-                        () => document.readyState === 'complete' || document.body !== null,
-                        { timeout: 10000 }
-                    ).catch(() => {
-                        // 무시 - 이미 DOM은 로드됨
-                    });
+                        () => {
+                            return document.readyState === 'complete' && 
+                                   document.body !== null && 
+                                   document.body.innerText.length > 100; // 충분한 콘텐츠 로드 확인
+                        },
+                        { timeout: 15000 }
+                    );
                     
                     pageLoaded = true;
                 } catch (error) {
                     lastError = error;
                     retryCount++;
                     if (retryCount <= maxRetries) {
-                        this.emit('update', { type: 'warning', message: `[인스턴스 ${instanceId}] 재시도 중... (${retryCount}/${maxRetries})` });
-                        await this.sleep(this.randomDelay(3000, 8000)); // 재시도 전 더 긴 대기
+                        const errorMsg = error.message.includes('timeout') 
+                            ? '타임아웃' 
+                            : error.message.substring(0, 50);
+                        this.emit('update', { type: 'warning', message: `[인스턴스 ${instanceId}] 재시도 중... (${retryCount}/${maxRetries}) - ${errorMsg}` });
+                        await this.sleep(this.randomDelay(5000, 10000)); // 재시도 전 더 긴 대기
                     }
                 }
             }
@@ -170,31 +344,63 @@ class ViewBot extends EventEmitter {
                 message: `[인스턴스 ${instanceId}] 페이지 로드 완료 - 제목: ${pageTitle.substring(0, 50)}` 
             });
             
-            // YouTube인 경우 비디오 재생 시도
+            // YouTube인 경우 고급 시청 패턴 적용
             if (this.url.includes('youtube.com') || this.url.includes('youtu.be')) {
                 try {
-                    // YouTube 비디오 재생 버튼 클릭 시도
+                    // 1. 비디오 재생 버튼 클릭
                     await page.evaluate(() => {
-                        const playButton = document.querySelector('.ytp-play-button, button[aria-label*="재생"], button[aria-label*="Play"]');
+                        const playButton = document.querySelector('.ytp-play-button, button[aria-label*="재생"], button[aria-label*="Play"], .ytp-large-play-button');
                         if (playButton) {
                             playButton.click();
                         }
-                    }).catch(() => {
-                        // 재생 버튼을 찾을 수 없어도 계속 진행
-                    });
+                    }).catch(() => {});
                     
-                    // 비디오가 실제로 재생 중인지 확인
-                    await this.sleep(3000);
+                    // 2. 비디오가 실제로 재생 중인지 확인 및 최소 시청 시간 확보
+                    await this.sleep(5000);
                     const isPlaying = await page.evaluate(() => {
                         const video = document.querySelector('video');
-                        return video && !video.paused;
+                        if (video) {
+                            if (video.paused) {
+                                video.play().catch(() => {});
+                            }
+                            return !video.paused;
+                        }
+                        return false;
                     }).catch(() => false);
                     
                     if (isPlaying) {
                         this.emit('update', { type: 'success', message: `[인스턴스 ${instanceId}] 비디오 재생 중` });
+                        
+                        // 3. 최소 시청 시간 확보 (30초 이상 - YouTube 시청자 수 집계 기준)
+                        const minWatchTime = 30000; // 30초
+                        const watchTime = this.randomDelay(minWatchTime, minWatchTime + 30000);
+                        
+                        // 4. 자연스러운 시청 행동 시뮬레이션 (리소스 절약)
+                        let elapsed = 0;
+                        const interactionInterval = 8000; // 상호작용 간격 증가 (리소스 절약)
+                        
+                        while (elapsed < watchTime && this.running) {
+                            // 주기적으로 마우스 움직임 (간격 증가)
+                            if (elapsed % interactionInterval < 2000) {
+                                await page.mouse.move(
+                                    this.randomDelay(200, 400),
+                                    this.randomDelay(200, 400)
+                                ).catch(() => {}); // 에러 무시
+                            }
+                            
+                            // 가끔 스크롤 (간격 증가)
+                            if (elapsed % (interactionInterval * 2) < 2000) {
+                                await page.evaluate(() => {
+                                    window.scrollBy(0, 200);
+                                }).catch(() => {});
+                            }
+                            
+                            await this.sleep(2000); // 대기 시간 증가 (CPU 부하 감소)
+                            elapsed += 2000;
+                        }
                     }
                 } catch (error) {
-                    this.emit('update', { type: 'warning', message: `[인스턴스 ${instanceId}] 비디오 재생 시도 실패 (정상적일 수 있음)` });
+                    this.emit('update', { type: 'warning', message: `[인스턴스 ${instanceId}] 비디오 재생 시도 실패` });
                 }
             }
             
@@ -205,24 +411,37 @@ class ViewBot extends EventEmitter {
             const stayTime = this.randomDelay(this.minDelay, this.maxDelay);
             this.emit('update', { type: 'info', message: `[인스턴스 ${instanceId}] ${Math.floor(stayTime / 1000)}초 동안 페이지에 머무름...` });
 
-            // 스크롤 시뮬레이션 (자연스러운 사용자 행동)
-            await this.simulateScrolling(page);
+            // 스크롤 시뮬레이션 (자연스러운 사용자 행동) - 리소스 절약을 위해 간소화
+            if (this.numInstances <= 50) {
+                // 인스턴스가 적을 때만 상세한 스크롤 시뮬레이션
+                await this.simulateScrolling(page);
+            } else {
+                // 대량 실행 시 간단한 스크롤만
+                await page.evaluate(() => {
+                    window.scrollBy(0, 300);
+                });
+                await this.sleep(1000);
+            }
             
-            // YouTube인 경우 추가적인 상호작용 시도
+            // YouTube인 경우 추가적인 자연스러운 상호작용
             if (this.url.includes('youtube.com') || this.url.includes('youtu.be')) {
                 try {
-                    // 페이지에서 마우스 움직임 시뮬레이션
-                    await page.mouse.move(
-                        this.randomDelay(100, 500),
-                        this.randomDelay(100, 500)
-                    );
+                    // 댓글 섹션까지 스크롤 (자연스러운 행동)
+                    await this.sleep(this.randomDelay(2000, 4000));
+                    await page.evaluate(() => {
+                        const commentsSection = document.querySelector('#comments, ytd-comments');
+                        if (commentsSection) {
+                            commentsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }
+                    });
                     
-                    // 추가 스크롤 (YouTube는 긴 페이지)
-                    for (let i = 0; i < 3; i++) {
-                        await this.sleep(this.randomDelay(2000, 4000));
-                        await page.evaluate(() => {
-                            window.scrollBy(0, 300);
-                        });
+                    // 추가 마우스 움직임
+                    for (let i = 0; i < 2; i++) {
+                        await this.sleep(this.randomDelay(3000, 6000));
+                        await page.mouse.move(
+                            this.randomDelay(200, 800),
+                            this.randomDelay(200, 600)
+                        );
                     }
                 } catch (error) {
                     // 무시
@@ -251,10 +470,24 @@ class ViewBot extends EventEmitter {
         } finally {
             if (browser) {
                 try {
+                    // 모든 페이지 닫기
+                    const pages = await browser.pages();
+                    await Promise.all(pages.map(p => p.close().catch(() => {})));
+                    
+                    // 브라우저 종료
                     await browser.close();
+                    
+                    // 메모리 정리 대기
+                    await this.sleep(100);
+                    
                     this.emit('update', { type: 'log', message: `[인스턴스 ${instanceId}] 브라우저 종료` });
                 } catch (error) {
-                    // 무시
+                    // 강제 종료 시도
+                    try {
+                        await browser.close();
+                    } catch (e) {
+                        // 무시
+                    }
                 }
             }
         }
@@ -275,6 +508,14 @@ class ViewBot extends EventEmitter {
         this.stats.activeSessions = 0;
         this.stats.completedSessions = 0;
         this.stats.failedSessions = 0;
+        this.stats.initialViewerCount = null;
+        this.stats.currentViewerCount = null;
+        this.stats.viewerHistory = [];
+        
+        // YouTube인 경우 초기 시청자 수 확인 및 추적 시작
+        if (this.url.includes('youtube.com') || this.url.includes('youtu.be')) {
+            this.startViewerTracking();
+        }
         
         this.emit('update', { type: 'info', message: `ViewBot 시작: ${this.url}` });
         this.emit('update', { type: 'info', message: `동시 실행 인스턴스 수: ${this.numInstances}` });
@@ -306,10 +547,126 @@ class ViewBot extends EventEmitter {
     }
 
     /**
+     * 시청자 수 추적 시작 (고급 모드)
+     */
+    async startViewerTracking() {
+        // 초기 시청자 수 확인
+        try {
+            const browser = await puppeteer.launch({
+                headless: true,
+                args: [
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-blink-features=AutomationControlled'
+                ]
+            });
+            const page = await browser.newPage();
+            
+            // User-Agent 설정
+            await page.setUserAgent(this.getRandomUserAgent());
+            await page.setViewport(this.getRandomViewport());
+            
+            await page.goto(this.url, { waitUntil: 'networkidle0', timeout: 60000 });
+            await this.sleep(10000); // 페이지 완전 로드 대기 (라이브 채팅 로드 시간 고려)
+            
+            // 라이브 채팅이 로드될 때까지 대기
+            try {
+                await page.waitForSelector('yt-live-chat-app, #chat, yt-live-chat-viewer-engagement-message-renderer', { timeout: 15000 }).catch(() => {});
+            } catch (e) {
+                // 라이브 채팅이 없어도 계속 진행
+            }
+            
+            const viewerCount = await this.extractViewerCount(page);
+            if (viewerCount !== null && viewerCount > 0) {
+                this.stats.initialViewerCount = viewerCount;
+                this.stats.currentViewerCount = viewerCount;
+                this.stats.viewerHistory.push({
+                    time: new Date(),
+                    count: viewerCount
+                });
+                this.emit('update', { type: 'success', message: `✅ 초기 시청자 수 확인: ${viewerCount.toLocaleString()}명` });
+                this.emit('stats', this.stats);
+            } else {
+                this.emit('update', { type: 'warning', message: '⚠️ 초기 시청자 수를 확인할 수 없습니다. 라이브 스트림인지 확인하세요.' });
+            }
+            
+            await browser.close();
+        } catch (error) {
+            this.emit('update', { type: 'warning', message: `시청자 수 확인 실패: ${error.message}` });
+        }
+        
+        // 주기적으로 시청자 수 업데이트 (20초마다 - 더 자주 체크)
+        this.viewerTrackingInterval = setInterval(async () => {
+            if (!this.running) {
+                clearInterval(this.viewerTrackingInterval);
+                return;
+            }
+            
+            try {
+                const browser = await puppeteer.launch({
+                    headless: true,
+                    args: [
+                        '--no-sandbox',
+                        '--disable-setuid-sandbox',
+                        '--disable-dev-shm-usage',
+                        '--disable-blink-features=AutomationControlled'
+                    ]
+                });
+                const page = await browser.newPage();
+                
+                // 매번 다른 User-Agent 사용
+                await page.setUserAgent(this.getRandomUserAgent());
+                await page.setViewport(this.getRandomViewport());
+                
+                await page.goto(this.url, { waitUntil: 'networkidle0', timeout: 60000 });
+                await this.sleep(8000); // 로드 대기
+                
+                // 라이브 채팅이 로드될 때까지 대기
+                try {
+                    await page.waitForSelector('yt-live-chat-app, #chat, yt-live-chat-viewer-engagement-message-renderer', { timeout: 10000 }).catch(() => {});
+                } catch (e) {}
+                
+                const viewerCount = await this.extractViewerCount(page);
+                if (viewerCount !== null && viewerCount > 0) {
+                    const previousCount = this.stats.currentViewerCount;
+                    this.stats.currentViewerCount = viewerCount;
+                    this.stats.viewerHistory.push({
+                        time: new Date(),
+                        count: viewerCount
+                    });
+                    
+                    // 최근 100개 유지 (더 긴 추적)
+                    if (this.stats.viewerHistory.length > 100) {
+                        this.stats.viewerHistory.shift();
+                    }
+                    
+                    // 변화량 로그
+                    if (previousCount !== null) {
+                        const change = viewerCount - previousCount;
+                        if (Math.abs(change) > 0) {
+                            this.emit('update', { type: 'info', message: `시청자 수 업데이트: ${viewerCount.toLocaleString()}명 (${change >= 0 ? '+' : ''}${change})` });
+                        }
+                    }
+                    
+                    this.emit('stats', this.stats);
+                }
+                
+                await browser.close();
+            } catch (error) {
+                // 조용히 실패
+            }
+        }, 20000); // 20초마다 업데이트
+    }
+
+    /**
      * 봇 중지
      */
     stop() {
         this.running = false;
+        if (this.viewerTrackingInterval) {
+            clearInterval(this.viewerTrackingInterval);
+        }
         this.emit('update', { type: 'warning', message: '봇이 중지되었습니다.' });
     }
 

@@ -77,6 +77,28 @@
                     <div class="stat-label">실행 시간</div>
                     <div class="stat-value" id="runtime">00:00:00</div>
                 </div>
+                
+                <!-- YouTube 시청자 수 표시 (YouTube URL일 때만 표시) -->
+                <div id="viewerCountPanel" class="viewer-count-panel" style="display: none;">
+                    <h3>YouTube 시청자 수</h3>
+                    <div class="viewer-stats">
+                        <div class="viewer-stat-item">
+                            <div class="stat-label">시작 시</div>
+                            <div class="stat-value" id="initialViewerCount">-</div>
+                        </div>
+                        <div class="viewer-stat-item">
+                            <div class="stat-label">현재</div>
+                            <div class="stat-value" id="currentViewerCount">-</div>
+                        </div>
+                        <div class="viewer-stat-item">
+                            <div class="stat-label">변화</div>
+                            <div class="stat-value" id="viewerChange">-</div>
+                        </div>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="viewerChart"></canvas>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -90,6 +112,7 @@
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

@@ -15,8 +15,17 @@ const completedSessionsEl = document.getElementById('completedSessions');
 const failedSessionsEl = document.getElementById('failedSessions');
 const runtimeEl = document.getElementById('runtime');
 
+// 시청자 수 요소
+const viewerCountPanel = document.getElementById('viewerCountPanel');
+const initialViewerCountEl = document.getElementById('initialViewerCount');
+const currentViewerCountEl = document.getElementById('currentViewerCount');
+const viewerChangeEl = document.getElementById('viewerChange');
+const viewerChartCanvas = document.getElementById('viewerChart');
+
 let startTime = null;
 let runtimeInterval = null;
+let viewerChart = null;
+let currentUrl = '';
 
 // 시간 포맷팅
 function formatTime(seconds) {
@@ -57,6 +66,124 @@ function updateStats(stats) {
         startTime = new Date(stats.startTime);
         runtimeInterval = setInterval(updateRuntime, 1000);
     }
+    
+    // YouTube 시청자 수 업데이트
+    if (currentUrl && (currentUrl.includes('youtube.com') || currentUrl.includes('youtu.be'))) {
+        updateViewerStats(stats);
+    }
+}
+
+// 시청자 수 통계 업데이트
+function updateViewerStats(stats) {
+    if (stats.initialViewerCount !== null || stats.currentViewerCount !== null) {
+        viewerCountPanel.style.display = 'block';
+        
+        if (stats.initialViewerCount !== null) {
+            initialViewerCountEl.textContent = stats.initialViewerCount.toLocaleString() + '명';
+        }
+        
+        if (stats.currentViewerCount !== null) {
+            currentViewerCountEl.textContent = stats.currentViewerCount.toLocaleString() + '명';
+            
+            // 변화량 계산
+            if (stats.initialViewerCount !== null) {
+                const change = stats.currentViewerCount - stats.initialViewerCount;
+                viewerChangeEl.textContent = (change >= 0 ? '+' : '') + change.toLocaleString() + '명';
+                viewerChangeEl.style.color = change >= 0 ? '#2ecc71' : '#e74c3c';
+            }
+        }
+        
+        // 그래프 업데이트
+        if (stats.viewerHistory && stats.viewerHistory.length > 0) {
+            updateViewerChart(stats.viewerHistory, stats.initialViewerCount);
+        }
+    }
+}
+
+// 시청자 수 그래프 업데이트
+function updateViewerChart(history, initialCount) {
+    if (!viewerChart) {
+        const ctx = viewerChartCanvas.getContext('2d');
+        viewerChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: '시청자 수',
+                    data: [],
+                    borderColor: '#ffffff',
+                    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                    tension: 0.4,
+                    fill: true,
+                    borderWidth: 2
+                }, {
+                    label: '시작 시청자 수',
+                    data: [],
+                    borderColor: '#606060',
+                    borderDash: [5, 5],
+                    borderWidth: 1,
+                    pointRadius: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top',
+                        labels: {
+                            color: '#d0d0d0'
+                        }
+                    },
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false,
+                        backgroundColor: '#2a2a2a',
+                        titleColor: '#ffffff',
+                        bodyColor: '#d0d0d0',
+                        borderColor: '#404040',
+                        borderWidth: 1
+                    }
+                },
+                scales: {
+                    x: {
+                        ticks: {
+                            color: '#a0a0a0'
+                        },
+                        grid: {
+                            color: '#3a3a3a'
+                        }
+                    },
+                    y: {
+                        beginAtZero: false,
+                        ticks: {
+                            color: '#a0a0a0',
+                            callback: function(value) {
+                                return value.toLocaleString() + '명';
+                            }
+                        },
+                        grid: {
+                            color: '#3a3a3a'
+                        }
+                    }
+                }
+            }
+        });
+    }
+    
+    const labels = history.map((item, index) => {
+        const date = new Date(item.time);
+        return date.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    });
+    
+    const data = history.map(item => item.count);
+    const baseline = new Array(history.length).fill(initialCount || 0);
+    
+    viewerChart.data.labels = labels;
+    viewerChart.data.datasets[0].data = data;
+    viewerChart.data.datasets[1].data = baseline;
+    viewerChart.update('none'); // 애니메이션 없이 업데이트
 }
 
 // 봇 시작
@@ -66,8 +193,23 @@ botForm.addEventListener('submit', async (e) => {
     let instances = parseInt(document.getElementById('instances').value);
     instances = Math.min(Math.max(instances, 1), 300); // 1~300 사이로 제한
     
+    const url = document.getElementById('url').value;
+    currentUrl = url;
+    
+    // YouTube URL인지 확인하여 시청자 수 패널 표시
+    if (url.includes('youtube.com') || url.includes('youtu.be')) {
+        viewerCountPanel.style.display = 'block';
+        // 그래프 초기화
+        if (viewerChart) {
+            viewerChart.destroy();
+            viewerChart = null;
+        }
+    } else {
+        viewerCountPanel.style.display = 'none';
+    }
+    
     const formData = {
-        url: document.getElementById('url').value,
+        url: url,
         instances: instances,
         minDelay: document.getElementById('minDelay').value * 1000, // 초를 밀리초로 변환
         maxDelay: document.getElementById('maxDelay').value * 1000,
