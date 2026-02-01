@@ -20,6 +20,8 @@ const viewerCountPanel = document.getElementById('viewerCountPanel');
 const initialViewerCountEl = document.getElementById('initialViewerCount');
 const currentViewerCountEl = document.getElementById('currentViewerCount');
 const viewerChangeEl = document.getElementById('viewerChange');
+const viewerCountErrorEl = document.getElementById('viewerCountError');
+const viewerResultEl = document.getElementById('viewerResult');
 
 let startTime = null;
 let runtimeInterval = null;
@@ -83,20 +85,36 @@ function fetchYouTubeViewerCount(videoId) {
     if (!videoId) return Promise.resolve({ viewerCount: null, error: null });
     const url = '/api/youtube-viewers?videoId=' + encodeURIComponent(videoId);
     return fetch(url)
-        .then(function (res) { return res.json(); })
-        .then(function (data) {
+        .then(function (res) {
+            return res.json().then(function (data) {
+                return { ok: res.ok, data: data };
+            }).catch(function () {
+                return { ok: false, data: { viewerCount: null, error: 'API 응답 오류 (status ' + res.status + ')' } };
+            });
+        })
+        .then(function (result) {
+            var data = result.data;
             var n = data.viewerCount != null ? parseInt(data.viewerCount, 10) : null;
             if (n !== null && (isNaN(n) || n < 0)) n = null;
-            return { viewerCount: n, error: data.error || null };
+            return { viewerCount: n, error: data.error || (result.ok ? null : 'API 오류') };
         })
         .catch(function (err) {
-            return { viewerCount: null, error: err.message || '요청 실패' };
+            return { viewerCount: null, error: err.message || '요청 실패 (API 라우트 확인)' };
         });
 }
 
-// 시청자 통계 UI 업데이트 (초기값·현재값·증감 모두 반영)
-function updateViewerStats(initial, current) {
+// 시청자 통계 오류 메시지 표시
+function setViewerCountError(msg) {
+    if (viewerCountErrorEl) {
+        viewerCountErrorEl.textContent = msg || '';
+        viewerCountErrorEl.style.display = msg ? 'block' : 'none';
+    }
+}
+
+// 시청자 통계 UI 업데이트 (초기값·현재값·증감·결과 메시지)
+function updateViewerStats(initial, current, onFirstIncrease) {
     if (!viewerCountPanel) return;
+    setViewerCountError('');
     var validInitial = initial != null && !isNaN(initial) && initial >= 0;
     var validCurrent = current != null && !isNaN(current) && current >= 0;
     if (validInitial) {
@@ -110,12 +128,28 @@ function updateViewerStats(initial, current) {
             var change = current - initial;
             viewerChangeEl.textContent = (change >= 0 ? '+' : '') + change.toLocaleString() + '명';
             viewerChangeEl.style.color = change >= 0 ? '#2ecc71' : '#e74c3c';
-        } else {
-            viewerChangeEl.textContent = '-';
+            // 결과 문구: 이 방송에서 시청자 증가 성공 여부
+            if (viewerResultEl) {
+                if (change > 0) {
+                    viewerResultEl.innerHTML = '✅ <strong>이 방송에서 시청자 증가 감지</strong> (+' + change.toLocaleString() + '명)';
+                    viewerResultEl.className = 'viewer-result viewer-result-success';
+                    if (typeof onFirstIncrease === 'function') onFirstIncrease(change);
+                } else if (change < 0) {
+                    viewerResultEl.innerHTML = '❌ 이 방송 시청자 감소 (' + change.toLocaleString() + '명)';
+                    viewerResultEl.className = 'viewer-result viewer-result-decrease';
+                } else {
+                    viewerResultEl.innerHTML = '⏳ 변화 없음 (아직 반영 전이거나 요청 미반영)';
+                    viewerResultEl.className = 'viewer-result viewer-result-wait';
+                }
+            }
+        } else if (viewerResultEl) {
+            viewerResultEl.innerHTML = '';
+            viewerResultEl.className = 'viewer-result';
         }
     } else {
         currentViewerCountEl.textContent = '-';
         viewerChangeEl.textContent = '-';
+        if (viewerResultEl) { viewerResultEl.innerHTML = ''; viewerResultEl.className = 'viewer-result'; }
     }
 }
 
@@ -158,29 +192,41 @@ function run() {
     const videoId = getYouTubeVideoId(url);
     let initialViewerCount = null;
     let lastViewerCount = null;
+    var hasLoggedViewerIncrease = false;
 
     if (videoId) {
         initialViewerCountEl.textContent = '조회 중...';
         currentViewerCountEl.textContent = '-';
         viewerChangeEl.textContent = '-';
+        if (viewerResultEl) viewerResultEl.innerHTML = '';
         fetchYouTubeViewerCount(videoId).then(function (result) {
             var n = result.viewerCount;
             initialViewerCount = n;
             lastViewerCount = n;
             updateViewerStats(initialViewerCount, lastViewerCount);
-            if (n != null) addLog('info', '시작 시청자 수: ' + n.toLocaleString() + '명');
-            else addLog('warning', result.error || '시청자 수를 가져올 수 없습니다. 라이브 중인지, Vercel에 YOUTUBE_API_KEY 설정을 확인하세요.');
-            // 초기값 확정 후에만 주기 폴링 시작 → 증가분이 항상 올바르게 표시됨
+            if (n != null) {
+                addLog('info', '시작 시청자 수: ' + n.toLocaleString() + '명');
+                setViewerCountError('');
+            } else {
+                var errMsg = result.error || '시청자 수를 가져올 수 없습니다.';
+                setViewerCountError('⚠ ' + errMsg);
+                addLog('warning', errMsg + ' (라이브 URL·YOUTUBE_API_KEY 확인)');
+            }
             if (!viewerPollInterval) {
                 viewerPollInterval = setInterval(function () {
                     if (!isRunning) return;
                     fetchYouTubeViewerCount(videoId).then(function (res) {
                         if (res.viewerCount != null) {
                             lastViewerCount = res.viewerCount;
-                            updateViewerStats(initialViewerCount, lastViewerCount);
+                            updateViewerStats(initialViewerCount, lastViewerCount, function (change) {
+                                if (!hasLoggedViewerIncrease) {
+                                    hasLoggedViewerIncrease = true;
+                                    addLog('success', '✅ [이 방송] 시청자 수 증가 감지: 시작 ' + initialViewerCount.toLocaleString() + '명 → 현재 ' + lastViewerCount.toLocaleString() + '명 (+' + change.toLocaleString() + '명)');
+                                }
+                            });
                         }
                     });
-                }, 15000); // 15초마다 갱신
+                }, 15000);
             }
         });
     }
