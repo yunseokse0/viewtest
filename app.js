@@ -1,6 +1,6 @@
 /**
  * ViewBot - 프론트엔드 전용 (서버 없음)
- * URL을 설정한 만큼 새 탭으로 열어 접속을 시뮬레이션합니다.
+ * URL을 설정한 만큼 백그라운드에서 요청만 보냅니다. (팝업/탭 열지 않음)
  */
 
 // DOM 요소
@@ -16,10 +16,16 @@ const completedSessionsEl = document.getElementById('completedSessions');
 const failedSessionsEl = document.getElementById('failedSessions');
 const runtimeEl = document.getElementById('runtime');
 
+const viewerCountPanel = document.getElementById('viewerCountPanel');
+const initialViewerCountEl = document.getElementById('initialViewerCount');
+const currentViewerCountEl = document.getElementById('currentViewerCount');
+const viewerChangeEl = document.getElementById('viewerChange');
+
 let startTime = null;
 let runtimeInterval = null;
 let isRunning = false;
 let timeouts = []; // 중지 시 clearTimeout용
+let viewerPollInterval = null; // YouTube 시청자 수 폴링
 
 // 시간 포맷 (초 → HH:MM:SS)
 function formatTime(seconds) {
@@ -45,12 +51,12 @@ function addLog(type, message) {
     logContainer.scrollTop = logContainer.scrollHeight;
 }
 
-function updateStats(opened, pending, blocked) {
+function updateStats(completed, pending, failed) {
     const target = parseInt(document.getElementById('instances').value) || 0;
     totalVisitsEl.textContent = target;
     activeSessionsEl.textContent = pending;
-    completedSessionsEl.textContent = opened;
-    failedSessionsEl.textContent = blocked;
+    completedSessionsEl.textContent = completed;
+    failedSessionsEl.textContent = failed;
 }
 
 // 랜덤 지연 (초 → 밀리초)
@@ -58,6 +64,57 @@ function randomDelaySec(minSec, maxSec) {
     const min = Math.min(minSec, maxSec) * 1000;
     const max = Math.max(minSec, maxSec) * 1000;
     return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+// YouTube URL에서 비디오 ID 추출
+function getYouTubeVideoId(url) {
+    if (!url || (!url.includes('youtube.com') && !url.includes('youtu.be'))) return null;
+    try {
+        const u = new URL(url);
+        if (u.hostname === 'youtu.be') return u.pathname.slice(1).split('?')[0] || null;
+        return u.searchParams.get('v') || null;
+    } catch (e) {
+        return null;
+    }
+}
+
+// YouTube Data API v3로 라이브 시청자 수 조회
+function fetchYouTubeViewerCount(videoId, apiKey) {
+    if (!videoId || !apiKey) return Promise.resolve(null);
+    const url = 'https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=' + encodeURIComponent(videoId) + '&key=' + encodeURIComponent(apiKey);
+    return fetch(url)
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+            const item = data.items && data.items[0];
+            if (!item || !item.liveStreamingDetails) return null;
+            const n = item.liveStreamingDetails.concurrentViewers;
+            return n === undefined ? null : parseInt(n, 10);
+        })
+        .catch(function () { return null; });
+}
+
+// 시청자 통계 UI 업데이트
+function updateViewerStats(initial, current) {
+    if (!viewerCountPanel) return;
+    viewerCountPanel.style.display = 'block';
+    if (initial != null) {
+        initialViewerCountEl.textContent = initial.toLocaleString() + '명';
+    } else {
+        initialViewerCountEl.textContent = '-';
+    }
+    if (current != null) {
+        currentViewerCountEl.textContent = current.toLocaleString() + '명';
+        if (initial != null) {
+            const change = current - initial;
+            viewerChangeEl.textContent = (change >= 0 ? '+' : '') + change.toLocaleString() + '명';
+            viewerChangeEl.style.color = change >= 0 ? '#2ecc71' : '#e74c3c';
+        } else {
+            viewerChangeEl.textContent = '-';
+        }
+    } else {
+        currentViewerCountEl.textContent = '-';
+        viewerChangeEl.textContent = '-';
+    }
 }
 
 function run() {
@@ -92,31 +149,71 @@ function run() {
     let blocked = 0;
     const target = instances;
 
-    addLog('success', '시작: ' + url + ' (탭 ' + target + '개)');
+    addLog('success', '시작: ' + url + ' (요청 ' + target + '개, 팝업 없음)');
 
-    function openOne(index) {
+    // YouTube 시청자 통계 (API 키 있을 때만)
+    const videoId = getYouTubeVideoId(url);
+    const apiKey = (document.getElementById('youtubeApiKey') && document.getElementById('youtubeApiKey').value) ? document.getElementById('youtubeApiKey').value.trim() : '';
+    let initialViewerCount = null;
+    let lastViewerCount = null;
+
+    if (videoId && apiKey) {
+        viewerCountPanel.style.display = 'block';
+        initialViewerCountEl.textContent = '조회 중...';
+        currentViewerCountEl.textContent = '-';
+        viewerChangeEl.textContent = '-';
+        fetchYouTubeViewerCount(videoId, apiKey).then(function (n) {
+            initialViewerCount = n;
+            lastViewerCount = n;
+            updateViewerStats(initialViewerCount, lastViewerCount);
+            if (n != null) addLog('info', '시작 시청자 수: ' + n.toLocaleString() + '명');
+            else addLog('warning', '시청자 수를 가져올 수 없습니다. 라이브 중인지, API 키 권한을 확인하세요.');
+        });
+        viewerPollInterval = setInterval(function () {
+            if (!isRunning) return;
+            fetchYouTubeViewerCount(videoId, apiKey).then(function (n) {
+                if (n != null) {
+                    lastViewerCount = n;
+                    updateViewerStats(initialViewerCount, lastViewerCount);
+                }
+            });
+        }, 15000); // 15초마다 갱신
+    } else if (videoId) {
+        viewerCountPanel.style.display = 'none';
+    } else {
+        viewerCountPanel.style.display = 'none';
+    }
+
+    function sendOne(index) {
         if (!isRunning) return;
 
-        const w = window.open(url, '_blank', 'noopener,noreferrer');
-        if (w) {
-            opened++;
-            addLog('success', '탭 #' + (index + 1) + ' 열림');
-        } else {
-            blocked++;
-            addLog('warning', '탭 #' + (index + 1) + ' 차단됨 (팝업 허용 후 다시 시도)');
-        }
+        fetch(url, { method: 'GET', mode: 'no-cors', credentials: 'omit' })
+            .then(function () {
+                if (!isRunning) return;
+                opened++;
+                addLog('success', '요청 #' + (index + 1) + ' 전송됨');
+                updateStats(opened, target - opened - blocked, blocked);
+                scheduleNext(index);
+            })
+            .catch(function () {
+                if (!isRunning) return;
+                blocked++;
+                addLog('warning', '요청 #' + (index + 1) + ' 실패 (CORS/네트워크)');
+                updateStats(opened, target - opened - blocked, blocked);
+                scheduleNext(index);
+            });
+    }
 
-        updateStats(opened, target - opened - blocked, blocked);
-
+    function scheduleNext(index) {
+        if (!isRunning) return;
         if (opened + blocked >= target) {
             finish();
             return;
         }
-
         const nextIndex = index + 1;
         const delay = randomDelaySec(minDelay, maxDelay);
         const t = setTimeout(function () {
-            openOne(nextIndex);
+            sendOne(nextIndex);
         }, delay);
         timeouts.push(t);
     }
@@ -125,6 +222,10 @@ function run() {
         isRunning = false;
         timeouts.forEach(clearTimeout);
         timeouts = [];
+        if (viewerPollInterval) {
+            clearInterval(viewerPollInterval);
+            viewerPollInterval = null;
+        }
         if (runtimeInterval) {
             clearInterval(runtimeInterval);
             runtimeInterval = null;
@@ -134,7 +235,7 @@ function run() {
         botForm.querySelectorAll('input').forEach(function (input) {
             input.disabled = false;
         });
-        addLog('success', '완료: 열린 탭 ' + opened + '개' + (blocked ? ', 차단 ' + blocked + '개' : ''));
+        addLog('success', '완료: 전송 ' + opened + '개' + (blocked ? ', 실패 ' + blocked + '개' : ''));
         runtimeEl.textContent = formatTime(Math.floor((new Date() - startTime) / 1000));
         startTime = null;
     }
@@ -142,7 +243,7 @@ function run() {
     updateStats(0, target, 0);
 
     if (instances > 0) {
-        openOne(0);
+        sendOne(0);
     } else {
         finish();
     }
@@ -158,6 +259,10 @@ stopBtn.addEventListener('click', function () {
     isRunning = false;
     timeouts.forEach(clearTimeout);
     timeouts = [];
+    if (viewerPollInterval) {
+        clearInterval(viewerPollInterval);
+        viewerPollInterval = null;
+    }
     if (runtimeInterval) {
         clearInterval(runtimeInterval);
         runtimeInterval = null;
