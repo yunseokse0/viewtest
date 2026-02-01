@@ -152,6 +152,7 @@ function run() {
     const target = instances;
 
     addLog('success', '시작: ' + url + ' (요청 ' + target + '개, 팝업 없음)');
+    addLog('info', '외부 사이트는 CORS로 응답을 읽을 수 없어 "전송됨"으로만 표시됩니다. 요청은 서버에 도달합니다.');
 
     // YouTube 시청자 통계 (Vercel 환경변수 YOUTUBE_API_KEY 사용)
     const videoId = getYouTubeVideoId(url);
@@ -187,26 +188,19 @@ function run() {
     function sendOne(index) {
         if (!isRunning) return;
 
-        fetch(url, { method: 'GET', credentials: 'omit' })
-            .then(function (res) {
-                return { ok: res.ok, status: res.status };
-            })
-            .then(function (info) {
+        // no-cors: 요청은 전송되나 응답은 CORS로 읽을 수 없음. 외부 URL에서 실패 방지.
+        fetch(url, { method: 'GET', mode: 'no-cors', credentials: 'omit' })
+            .then(function () {
                 if (!isRunning) return;
                 opened++;
-                if (info.ok) {
-                    addLog('success', '요청 #' + (index + 1) + ' 성공 (' + info.status + ')');
-                } else {
-                    addLog('warning', '요청 #' + (index + 1) + ' 응답 ' + info.status);
-                }
+                addLog('success', '요청 #' + (index + 1) + ' 전송됨');
                 updateStats(opened, target - opened - blocked, blocked);
                 scheduleNext(index);
             })
             .catch(function (err) {
                 if (!isRunning) return;
                 blocked++;
-                var msg = err && err.message ? err.message : 'CORS/네트워크';
-                addLog('warning', '요청 #' + (index + 1) + ' 실패: ' + msg);
+                addLog('warning', '요청 #' + (index + 1) + ' 실패: ' + (err && err.message ? err.message : '네트워크 오류'));
                 updateStats(opened, target - opened - blocked, blocked);
                 scheduleNext(index);
             });
@@ -223,7 +217,7 @@ function run() {
         const t = setTimeout(function () {
             sendOne(nextIndex);
         }, delay);
-        timeouts.push(t);
+        timeouts.push(t); // 중지 시 clearTimeout으로 취소하기 위해 보관
     }
 
     function finish() {
