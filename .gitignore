@@ -29,3 +29,7 @@ Thumbs.db
 # Logs
 *.log
 .vercel
+
+# 로컬 환경 변수 (API 키 등)
+.env
+.env.local

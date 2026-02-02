@@ -11,11 +11,13 @@ class ViewBot extends EventEmitter {
         super();
         this.url = url;
         this.numInstances = options.numInstances || 5;
+        this.maxConcurrent = options.maxConcurrent != null ? Math.min(Math.max(parseInt(options.maxConcurrent) || 12, 1), 100) : 12; // 한번에 N명씩 (기본 12 = 타임아웃 감소·시청 완료 증가)
         this.headless = options.headless !== false;
         this.minDelay = options.minDelay || 5000; // 밀리초
         this.maxDelay = options.maxDelay || 15000; // 밀리초
         this.running = false;
         this.stats = {
+            targetInstances: 0,
             totalVisits: 0,
             activeSessions: 0,
             completedSessions: 0,
@@ -245,6 +247,7 @@ class ViewBot extends EventEmitter {
             
             browser = await puppeteer.launch({
                 headless: this.headless,
+                executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
                 args: [
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
@@ -276,6 +279,7 @@ class ViewBot extends EventEmitter {
             });
 
             const page = await browser.newPage();
+            page.setDefaultNavigationTimeout(120000); // 120초 (타임아웃 감소 → 시청 완료 증가)
             
             // User-Agent 설정
             await page.setUserAgent(this.getRandomUserAgent());
@@ -295,7 +299,7 @@ class ViewBot extends EventEmitter {
             
             // 페이지 접속 (재시도 로직 포함, YouTube 등 복잡한 사이트 대응)
             let pageLoaded = false;
-            const maxRetries = 3;
+            const maxRetries = 5; // 재시도 5회 (타임아웃·실패 감소)
             let retryCount = 0;
             let lastError = null;
             
@@ -308,34 +312,26 @@ class ViewBot extends EventEmitter {
                         }
                     });
                     
-                    // YouTube는 load 이벤트를 기다리는 것이 더 안정적
+                    // YouTube는 networkidle0에서 타임아웃 나기 쉬우므로 load 또는 domcontentloaded 사용
+                    const isYouTube = this.url.includes('youtube.com') || this.url.includes('youtu.be');
                     await page.goto(this.url, {
-                        waitUntil: 'networkidle0', // 네트워크가 완전히 유휴 상태가 될 때까지
-                        timeout: 120000, // 120초로 증가
+                        waitUntil: isYouTube ? 'domcontentloaded' : 'load',
+                        timeout: 120000, // 120초 (타임아웃 줄이기)
                     }).catch(async (gotoError) => {
-                        // 소켓 에러 처리
-                        if (gotoError.message.includes('ERR_SOCKET_NOT_CONNECTED') || gotoError.message.includes('net::')) {
-                            this.emit('update', { type: 'warning', message: `[인스턴스 ${instanceId}] 네트워크 연결 오류, 재시도 중...` });
-                            await this.sleep(this.randomDelay(3000, 6000));
-                            // domcontentloaded로 재시도 (더 관대한 옵션)
-                            await page.goto(this.url, {
-                                waitUntil: 'domcontentloaded',
-                                timeout: 90000
-                            });
+                        if (gotoError.message.includes('timeout') || gotoError.message.includes('ERR_SOCKET') || gotoError.message.includes('net::')) {
+                            this.emit('update', { type: 'warning', message: `[인스턴스 ${instanceId}] 로드 지연, domcontentloaded로 재시도...` });
+                            await this.sleep(2000);
+                            await page.goto(this.url, { waitUntil: 'domcontentloaded', timeout: 90000 });
                         } else {
                             throw gotoError;
                         }
                     });
                     
-                    // 페이지가 실제로 로드되었는지 확인
-                    await page.waitForFunction(
-                        () => {
-                            return document.readyState === 'complete' && 
-                                   document.body !== null && 
-                                   document.body.innerText.length > 100; // 충분한 콘텐츠 로드 확인
-                        },
-                        { timeout: 15000 }
-                    );
+                    // 페이지 기본 로드 확인 (YouTube는 조건 완화 → 타임아웃 감소)
+                    const bodyReady = isYouTube
+                        ? () => document.readyState !== 'loading' && document.body
+                        : () => document.readyState !== 'loading' && document.body && document.body.innerText && document.body.innerText.length > 50;
+                    await page.waitForFunction(bodyReady, { timeout: 50000 }); // 50초
                     
                     pageLoaded = true;
                 } catch (error) {
@@ -348,7 +344,7 @@ class ViewBot extends EventEmitter {
                             ? '네트워크 연결 오류'
                             : error.message.substring(0, 50);
                         this.emit('update', { type: 'warning', message: `[인스턴스 ${instanceId}] 재시도 중... (${retryCount}/${maxRetries}) - ${errorMsg}` });
-                        await this.sleep(this.randomDelay(5000, 10000)); // 재시도 전 더 긴 대기
+                        await this.sleep(this.randomDelay(4000, 7000)); // 재시도 전 대기
                     }
                 }
             }
@@ -369,16 +365,22 @@ class ViewBot extends EventEmitter {
             // YouTube인 경우 고급 시청 패턴 적용
             if (this.url.includes('youtube.com') || this.url.includes('youtu.be')) {
                 try {
+                    // 0. 비디오 요소가 DOM에 나타날 때까지 대기 (재생 실패 원인: 플레이어 로드 지연)
+                    await page.waitForSelector('video', { timeout: 20000 }).catch(() => {});
+                    await this.sleep(3000);
                     // 1. 비디오 재생 버튼 클릭
                     await page.evaluate(() => {
                         const playButton = document.querySelector('.ytp-play-button, button[aria-label*="재생"], button[aria-label*="Play"], .ytp-large-play-button');
                         if (playButton) {
                             playButton.click();
                         }
+                        // 큰 재생 버튼(오버레이)도 클릭 시도
+                        const bigPlay = document.querySelector('.ytp-large-play-button');
+                        if (bigPlay) bigPlay.click();
                     }).catch(() => {});
                     
-                    // 2. 비디오 요소 찾기 및 재생 강제
-                    await this.sleep(3000);
+                    // 2. 플레이어·스트림 로드 대기 (동시 인스턴스·느린 네트워크 시 버퍼링)
+                    await this.sleep(8000);
                     
                     // 비디오 재생 강제 시도
                     const videoStarted = await page.evaluate(async () => {
@@ -418,24 +420,26 @@ class ViewBot extends EventEmitter {
                         await this.sleep(2000);
                     }
                     
-                    // 3. 비디오가 실제로 재생 중인지 확인 (주기적으로)
+                    // 3. 비디오가 실제로 재생 중인지 확인 (재시도 12회, 2.5초 간격 = 최대 30초 대기)
                     let isPlaying = false;
-                    for (let checkCount = 0; checkCount < 5; checkCount++) {
+                    for (let checkCount = 0; checkCount < 12; checkCount++) {
                         isPlaying = await page.evaluate(() => {
                             const video = document.querySelector('video');
+                            if (video && video.paused) video.play().catch(() => {});
+                            // readyState >= 2: 재생 가능한 데이터 있음. 1이면 아직 로딩 중이므로 조금 더 대기
                             return video && !video.paused && !video.ended && video.readyState >= 2;
                         }).catch(() => false);
                         
                         if (isPlaying) break;
-                        await this.sleep(2000);
+                        await this.sleep(2500);
                     }
                     
                     if (isPlaying) {
-                        this.emit('update', { type: 'success', message: `[인스턴스 ${instanceId}] 비디오 재생 중 - 최소 30초 이상 시청` });
+                        this.emit('update', { type: 'success', message: `[인스턴스 ${instanceId}] 비디오 재생 중 - 최소 60초 이상 시청 (시청자 수 반영)` });
                         
-                        // 4. 최소 시청 시간 확보 (30초 이상 - YouTube 시청자 수 집계 기준)
-                        const minWatchTime = 35000; // 35초 (여유 있게)
-                        const maxWatchTime = 60000; // 최대 60초
+                        // 4. 최소 시청 시간 확보 (YouTube 라이브 시청자 수 집계: 60초 이상 권장)
+                        const minWatchTime = 60000; // 60초
+                        const maxWatchTime = 90000; // 최대 90초
                         const watchTime = this.randomDelay(minWatchTime, maxWatchTime);
                         
                         this.emit('update', { type: 'info', message: `[인스턴스 ${instanceId}] ${Math.floor(watchTime / 1000)}초 동안 시청 중...` });
@@ -549,6 +553,9 @@ class ViewBot extends EventEmitter {
             }
 
             this.emit('update', { type: 'success', message: `[인스턴스 ${instanceId}] 세션 종료` });
+            if (this.url.includes('youtube.com') || this.url.includes('youtu.be')) {
+                this.emit('update', { type: 'success', message: `[인스턴스 ${instanceId}] 이 방송에 시청자 1명 반영됨` });
+            }
             this.stats.completedSessions++;
             this.stats.activeSessions--;
             this.emit('stats', this.stats);
@@ -598,6 +605,7 @@ class ViewBot extends EventEmitter {
 
         this.running = true;
         this.stats.startTime = new Date();
+        this.stats.targetInstances = this.numInstances;
         this.stats.totalVisits = 0;
         this.stats.activeSessions = 0;
         this.stats.completedSessions = 0;
@@ -607,40 +615,53 @@ class ViewBot extends EventEmitter {
         this.stats.viewerHistory = [];
         
         this.emit('update', { type: 'info', message: `ViewBot 시작: ${this.url}` });
-        this.emit('update', { type: 'info', message: `동시 실행 인스턴스 수: ${this.numInstances}` });
-        
-        // YouTube인 경우 먼저 초기 시청자 수 확인 (작업 시작 전)
+        this.emit('update', { type: 'info', message: '각 인스턴스: 브라우저 실행(~30초) + 페이지 로드(~1분) + 시청(60초~) 소요. 로그를 보며 잠시만 기다려 주세요.' });
         if (this.url.includes('youtube.com') || this.url.includes('youtu.be')) {
-            this.emit('update', { type: 'info', message: '초기 시청자 수 확인 중...' });
-            await this.getInitialViewerCount(); // 먼저 초기 시청자 수 확인 완료 대기
-            this.emit('stats', this.stats);
-            
-            // 초기 시청자 수 확인 후 추적 시작
-            this.startViewerTracking();
-        }
-        
-        this.emit('stats', this.stats);
-
-        // 배치 처리: 한번에 너무 많은 인스턴스를 실행하지 않도록 제한
-        const batchSize = Math.min(50, this.numInstances); // 최대 50개씩 배치 처리
-        const promises = [];
-        
-        for (let i = 0; i < this.numInstances; i++) {
-            const promise = (async () => {
-                // 인스턴스 간 시작 시간 간격 (배치 내에서도 분산)
-                const delay = this.randomDelay(500, 2000) + (Math.floor(i / batchSize) * 1000);
-                await this.sleep(delay);
-                await this.visitPage(i + 1);
-            })();
-            promises.push(promise);
-            
-            // 배치 크기만큼 실행 후 잠시 대기 (시스템 부하 분산)
-            if ((i + 1) % batchSize === 0 && i < this.numInstances - 1) {
-                await this.sleep(2000); // 배치 간 대기
+            if (this.headless) {
+                this.emit('update', { type: 'warning', message: 'YouTube: Headless 모드에서는 시청자 수에 포함되지 않을 수 있습니다. 웹에서 YouTube URL 사용 시 브라우저가 보이도록(headed) 실행할 수 있습니다.' });
+            } else {
+                this.emit('update', { type: 'info', message: 'YouTube: 브라우저가 보이는 모드로 실행되어 시청자 수 반영 가능성이 높습니다.' });
             }
         }
+        const MAX_CONCURRENT = Math.min(this.maxConcurrent, this.numInstances);
+        // 동시 실행 많을수록 시작 간격 넓혀서 부하 분산 → 타임아웃 감소
+        const START_STAGGER_MS = MAX_CONCURRENT <= 5 ? 500 : (MAX_CONCURRENT >= 15 ? 1000 : 600);
+        this.emit('update', { type: 'info', message: `총 ${this.numInstances}개 · 한번에 ${MAX_CONCURRENT}명씩 (간격 ${START_STAGGER_MS}ms)` });
+        const isYouTube = this.url.includes('youtube.com') || this.url.includes('youtu.be');
+        if (isYouTube) {
+            this.emit('update', { type: 'info', message: `이 방송에 시청자 ${this.numInstances}명 투입 예정 (YouTube 라이브)` });
+        }
+        this.emit('stats', this.stats);
 
-        await Promise.all(promises);
+        const total = this.numInstances;
+        let nextIndex = 0;
+        let completedCount = 0;
+
+        await new Promise((resolve) => {
+            const runNext = async () => {
+                if (completedCount === total || !this.running) {
+                    resolve();
+                    return;
+                }
+                if (nextIndex >= total) return;
+                const i = nextIndex++;
+                const instanceId = i + 1;
+                if (i > 0) await this.sleep(START_STAGGER_MS);
+                this.visitPage(instanceId)
+                    .then(() => {
+                        completedCount++;
+                        if (completedCount === total) resolve();
+                        runNext();
+                    })
+                    .catch(() => {
+                        completedCount++;
+                        if (completedCount === total) resolve();
+                        runNext();
+                    });
+            };
+            const poolSize = Math.min(MAX_CONCURRENT, total);
+            for (let k = 0; k < poolSize; k++) runNext();
+        });
         this.running = false;
         this.emit('update', { type: 'success', message: '모든 세션이 완료되었습니다.' });
         this.emit('complete');
@@ -654,6 +675,7 @@ class ViewBot extends EventEmitter {
         try {
             browser = await puppeteer.launch({
                 headless: true,
+                executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
                 args: [
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
@@ -747,6 +769,7 @@ class ViewBot extends EventEmitter {
             try {
                 const browser = await puppeteer.launch({
                     headless: true,
+                    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
                     args: [
                         '--no-sandbox',
                         '--disable-setuid-sandbox',
@@ -789,23 +812,27 @@ class ViewBot extends EventEmitter {
                         this.stats.viewerHistory.shift();
                     }
                     
-                    // 변화량 로그 (더 자세한 정보)
+                    // 변화량 로그 (시청자 수 증가/감소 여부 명시)
                     if (previousCount !== null && previousCount > 0) {
                         const change = viewerCount - previousCount;
                         const changePercent = ((change / previousCount) * 100).toFixed(1);
+                        const trend = change > 0 ? '시청자 수 증가' : (change < 0 ? '시청자 수 감소' : '변동 없음');
                         if (Math.abs(change) > 0) {
                             this.emit('update', { 
                                 type: change > 0 ? 'success' : 'info', 
-                                message: `📊 시청자 수: ${viewerCount.toLocaleString()}명 (${change >= 0 ? '+' : ''}${change}, ${changePercent}%)` 
+                                message: `📊 시청자 수: ${viewerCount.toLocaleString()}명 (${change >= 0 ? '+' : ''}${change}, ${changePercent}%) → ${trend}` 
                             });
+                        } else {
+                            this.emit('update', { type: 'info', message: `📊 시청자 수: ${viewerCount.toLocaleString()}명 → ${trend}` });
                         }
                     } else if (previousCount === null && this.stats.initialViewerCount !== null) {
                         // 초기 시청자 수와 비교
                         const change = viewerCount - this.stats.initialViewerCount;
                         const changePercent = ((change / this.stats.initialViewerCount) * 100).toFixed(1);
+                        let trend = change > 0 ? '시청자 수 증가' : (change < 0 ? '시청자 수 감소' : '변동 없음');
                         this.emit('update', { 
-                            type: change > 0 ? 'success' : 'info', 
-                            message: `📊 시청자 수: ${viewerCount.toLocaleString()}명 (시작 대비 ${change >= 0 ? '+' : ''}${change}, ${changePercent}%)` 
+                            type: change > 0 ? 'success' : (change < 0 ? 'info' : 'info'), 
+                            message: `📊 시청자 수: ${viewerCount.toLocaleString()}명 (시작 대비 ${change >= 0 ? '+' : ''}${change}, ${changePercent}%) → ${trend}` 
                         });
                     }
                     

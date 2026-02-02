@@ -59,6 +59,61 @@ node server.js
 
 브라우저에서 `http://localhost:3000`으로 접속하여 사용할 수 있습니다.
 
+### 🖥️ 두 가지 모드 (분석 문서 기준)
+
+| 모드 | 실행 방법 | 동작 | 시청자 수 반영 |
+|------|------------|------|----------------|
+| **실제 브라우저 (플레이어 로드)** | `npm run server` | Puppeteer로 실제 브라우저·플레이어 로드 | **반영될 수 있음** |
+| **요청 전송만** | `npm run dev` 또는 Vercel 배포 | `fetch` no-cors로 GET만 전송 | **미반영** (분석 문서 참고) |
+
+**로컬에서 완전히 실행 (실제 시청자 수 반영 + 통계 표시):**
+
+1. 의존성 설치 및 서버 실행:
+```bash
+npm install
+npm run server
+```
+
+2. 브라우저에서 **http://localhost:3000** 접속. "모드: 실제 브라우저 (플레이어 로드)"가 보이면 정상.
+
+3. **YouTube 시청자 수** 패널을 쓰려면 **YOUTUBE_API_KEY** 설정:
+   - 프로젝트 루트에 `.env` 파일을 만들고 다음 한 줄 추가:
+     `YOUTUBE_API_KEY=여기에_발급받은_API키`
+   - 또는 터미널에서: `set YOUTUBE_API_KEY=여기에_키` (Windows) / `export YOUTUBE_API_KEY=여기에_키` (Mac/Linux) 후 `npm run server`
+   - API 키는 [Google Cloud Console](https://console.cloud.google.com/) → YouTube Data API v3 사용 설정 후 발급.
+
+4. 라이브 중인 YouTube URL 입력, 요청 수 2~5로 두고 **시작** 클릭. 로그에 "브라우저 시작", "페이지 로드 완료", "비디오 재생 중" 등이 뜨면 실제 브라우저 모드로 동작 중입니다.
+
+**로컬에서 API만 테스트 (요청 전송만):**
+
+```bash
+npm run dev
+```
+
+- 앱 UI와 `/api/youtube-viewers` API가 같은 서버에서 동작합니다.  
+- 이 모드에서는 시청자 수가 증가하지 않습니다 (분석: `docs/알고리즘_시청자증가_분석.md`).
+
+**Vercel에서는 "실제 브라우저" 모드가 안 되는 이유:**  
+Vercel은 서버리스(요청 시에만 함수 실행)라, Puppeteer로 브라우저를 오래 켜 두는 구조와 맞지 않습니다. 그래서 Vercel에 배포하면 항상 "요청 전송만" 모드만 되고, 시청자 수는 증가하지 않습니다. 자세한 이유: `docs/Vercel에서_실제작동_불가_이유.md`
+
+**클라우드에서 "실제 작동"을 원할 때 (Railway 배포):**
+
+이 저장소에는 **Dockerfile**이 포함되어 있어, Railway에서 **실제 브라우저(플레이어 로드)** 모드로 바로 배포할 수 있습니다.
+
+1. [Railway](https://railway.app) 로그인 후 **New Project** → **Deploy from GitHub repo** 선택.
+2. 이 저장소(`viewtest`)를 연결하고, **Deploy** 시작.
+3. Railway가 **Dockerfile**을 감지해 Node + Chromium 환경으로 빌드하고 `node server.js`를 실행합니다.
+4. 배포가 끝나면 **Settings** → **Generate Domain**으로 URL을 생성합니다.
+5. 해당 URL로 접속하면 **"모드: 실제 브라우저 (플레이어 로드)"**가 표시되고, 시청자 수에 반영될 수 있는 방식으로 동작합니다.
+
+**참고:** 무료 티어는 메모리 제한이 있어 동시 인스턴스 수를 5~10개 정도로 두는 것이 안정적입니다. 유료 플랜에서는 더 많이 설정할 수 있습니다.
+
+**Vercel 배포 후 API가 404일 때:**
+
+1. Vercel 대시보드 → 프로젝트 → **Settings** → **General**  
+   - **Root Directory**: 비워 두거나 `.` (저장소 루트). `public` 등으로 두면 `api/` 폴더가 배포되지 않아 404가 납니다.
+2. **Environment Variables**에 `YOUTUBE_API_KEY` 추가 후 재배포.
+
 **웹 인터페이스 기능:**
 - 직관적인 UI로 URL 입력 및 설정
 - 실시간 통계 표시 (총 접속 수, 진행 중, 완료, 실패)

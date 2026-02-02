@@ -1,6 +1,7 @@
 /**
- * ViewBot - 프론트엔드 전용 (서버 없음)
- * URL을 설정한 만큼 백그라운드에서 요청만 보냅니다. (팝업/탭 열지 않음)
+ * ViewBot - 분석 문서 기준 두 모드 지원
+ * 1) Puppeteer 모드 (npm run server): 실제 브라우저·플레이어 로드 → 시청자 수 반영 가능
+ * 2) 요청 전송만 (Vercel/api-server): fetch no-cors → 시청자 수 미반영
  */
 
 // DOM 요소
@@ -23,11 +24,15 @@ const viewerChangeEl = document.getElementById('viewerChange');
 const viewerCountErrorEl = document.getElementById('viewerCountError');
 const viewerResultEl = document.getElementById('viewerResult');
 
+const modeNoticeEl = document.getElementById('modeNotice');
+
 let startTime = null;
 let runtimeInterval = null;
 let isRunning = false;
 let timeouts = []; // 중지 시 clearTimeout용
 let viewerPollInterval = null; // YouTube 시청자 수 폴링
+let usePuppeteer = false; // /api/capabilities 에서 설정
+let socket = null; // Puppeteer 모드 시 Socket.io
 
 // 시간 포맷 (초 → HH:MM:SS)
 function formatTime(seconds) {
@@ -168,10 +173,153 @@ function run() {
     document.getElementById('url').value = url;
 
     let instances = parseInt(document.getElementById('instances').value);
-    instances = Math.min(Math.max(instances, 1), 1000);
+    instances = Math.min(Math.max(instances, 1), usePuppeteer ? 300 : 1000);
 
     const minDelay = parseInt(document.getElementById('minDelay').value) || 0;
     const maxDelay = Math.max(parseInt(document.getElementById('maxDelay').value) || 0, minDelay);
+
+    if (usePuppeteer) {
+        runPuppeteerMode(url, instances, minDelay, maxDelay);
+    } else {
+        runFetchMode(url, instances, minDelay, maxDelay);
+    }
+}
+
+// Puppeteer 모드: 실제 브라우저·플레이어 로드 → 시청자 수 반영 가능
+function runPuppeteerMode(url, instances, minDelaySec, maxDelaySec) {
+    const minMs = minDelaySec < 1000 ? minDelaySec * 1000 : minDelaySec;
+    const maxMs = maxDelaySec < 1000 ? maxDelaySec * 1000 : maxDelaySec;
+
+    fetch('/api/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            url: url,
+            instances: instances,
+            minDelay: minMs,
+            maxDelay: maxMs,
+            headless: true
+        })
+    })
+        .then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+        .then(function (result) {
+            if (!result.ok) {
+                addLog('error', result.data.error || '봇 시작 실패');
+                return;
+            }
+            isRunning = true;
+            startBtn.disabled = true;
+            stopBtn.disabled = false;
+            botForm.querySelectorAll('input').forEach(function (input) {
+                if (input.type !== 'checkbox') input.disabled = true;
+            });
+            startTime = new Date();
+            runtimeInterval = setInterval(updateRuntime, 1000);
+            addLog('success', '시작: ' + url + ' (실제 브라우저 ' + instances + '개, 플레이어 로드)');
+            updateStats(0, instances, 0);
+
+            // Puppeteer 모드에서도 시청자 통계 표시 (서버 /api/youtube-viewers + .env YOUTUBE_API_KEY)
+            var videoId = getYouTubeVideoId(url);
+            var initialViewerCount = null;
+            var lastViewerCount = null;
+            var hasLoggedViewerIncrease = false;
+            if (videoId) {
+                if (initialViewerCountEl) initialViewerCountEl.textContent = '조회 중...';
+                if (currentViewerCountEl) currentViewerCountEl.textContent = '-';
+                if (viewerChangeEl) viewerChangeEl.textContent = '-';
+                if (viewerResultEl) viewerResultEl.innerHTML = '';
+                fetchYouTubeViewerCount(videoId).then(function (result) {
+                    var n = result.viewerCount;
+                    initialViewerCount = n;
+                    lastViewerCount = n;
+                    updateViewerStats(initialViewerCount, lastViewerCount);
+                    if (n != null) {
+                        addLog('info', '시작 시청자 수: ' + n.toLocaleString() + '명');
+                        setViewerCountError('');
+                    } else {
+                        var errMsg = result.error || '시청자 수를 가져올 수 없습니다.';
+                        setViewerCountError('⚠ ' + errMsg);
+                        addLog('warning', errMsg + ' (라이브 URL·.env YOUTUBE_API_KEY 확인)');
+                    }
+                    if (!viewerPollInterval) {
+                        viewerPollInterval = setInterval(function () {
+                            if (!isRunning) return;
+                            fetchYouTubeViewerCount(videoId).then(function (res) {
+                                if (res.viewerCount != null) {
+                                    lastViewerCount = res.viewerCount;
+                                    updateViewerStats(initialViewerCount, lastViewerCount, function (change) {
+                                        if (!hasLoggedViewerIncrease) {
+                                            hasLoggedViewerIncrease = true;
+                                            addLog('success', '✅ [이 방송] 시청자 수 증가 감지: 시작 ' + initialViewerCount.toLocaleString() + '명 → 현재 ' + lastViewerCount.toLocaleString() + '명 (+' + change.toLocaleString() + '명)');
+                                        }
+                                    });
+                                }
+                            });
+                        }, 15000);
+                    }
+                });
+            }
+
+            function connectSocket() {
+                if (typeof io === 'undefined') {
+                    var s = document.createElement('script');
+                    s.src = '/socket.io/socket.io.js';
+                    s.onload = connectSocket;
+                    document.head.appendChild(s);
+                    return;
+                }
+                socket = io();
+                socket.on('update', function (data) {
+                    addLog(data.type || 'info', data.message || '');
+                });
+                socket.on('stats', function (stats) {
+                    if (stats && totalVisitsEl) {
+                        totalVisitsEl.textContent = stats.totalVisits != null ? stats.totalVisits : instances;
+                        activeSessionsEl.textContent = stats.activeSessions != null ? stats.activeSessions : 0;
+                        completedSessionsEl.textContent = stats.completedSessions != null ? stats.completedSessions : 0;
+                        failedSessionsEl.textContent = stats.failedSessions != null ? stats.failedSessions : 0;
+                    }
+                });
+                socket.on('complete', function () {
+                    finishPuppeteer();
+                });
+            }
+            connectSocket();
+        })
+        .catch(function (err) {
+            addLog('error', err.message || '서버 연결 실패. npm run server 로 실행 중인지 확인하세요.');
+        });
+}
+
+function finishPuppeteer() {
+    isRunning = false;
+    if (viewerPollInterval) {
+        clearInterval(viewerPollInterval);
+        viewerPollInterval = null;
+    }
+    if (socket) {
+        socket.disconnect();
+        socket = null;
+    }
+    if (runtimeInterval) {
+        clearInterval(runtimeInterval);
+        runtimeInterval = null;
+    }
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+    botForm.querySelectorAll('input').forEach(function (input) {
+        input.disabled = false;
+    });
+    if (startTime) {
+        runtimeEl.textContent = formatTime(Math.floor((new Date() - startTime) / 1000));
+    }
+    startTime = null;
+    addLog('success', '완료 (실제 브라우저 모드)');
+}
+
+// 요청 전송만 모드: fetch no-cors → 시청자 수 미반영 (분석 문서 참고)
+function runFetchMode(url, instances, minDelay, maxDelay) {
+    const target = instances;
 
     isRunning = true;
     startBtn.disabled = true;
@@ -186,10 +334,9 @@ function run() {
 
     let opened = 0;
     let blocked = 0;
-    const target = instances;
 
-    addLog('success', '시작: ' + url + ' (요청 ' + target + '개, 팝업 없음)');
-    addLog('info', '외부 사이트는 CORS로 응답을 읽을 수 없어 "전송됨"으로만 표시됩니다. 요청은 서버에 도달합니다.');
+    addLog('success', '시작: ' + url + ' (요청 ' + target + '개)');
+    addLog('info', '모드: 요청 전송만 · 시청자 수는 증가하지 않습니다. 실제 반영을 원하면 로컬에서 npm run server 로 실행하세요.');
 
     // YouTube 시청자 통계 (Vercel 환경변수 YOUTUBE_API_KEY 사용)
     const videoId = getYouTubeVideoId(url);
@@ -307,6 +454,12 @@ botForm.addEventListener('submit', function (e) {
 
 stopBtn.addEventListener('click', function () {
     if (!isRunning) return;
+    if (usePuppeteer) {
+        fetch('/api/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+            .then(function () { finishPuppeteer(); });
+        addLog('warning', '사용자가 중지했습니다.');
+        return;
+    }
     isRunning = false;
     timeouts.forEach(clearTimeout);
     timeouts = [];
@@ -333,6 +486,24 @@ stopBtn.addEventListener('click', function () {
 clearLogBtn.addEventListener('click', function () {
     logContainer.innerHTML = '';
 });
+
+// 백엔드 능력 조회 → 모드 안내 표시
+fetch('/api/capabilities')
+    .then(function (res) { return res.ok ? res.json() : Promise.reject(); })
+    .then(function (data) {
+        usePuppeteer = data.puppeteer === true;
+        if (modeNoticeEl) {
+            modeNoticeEl.innerHTML = usePuppeteer
+                ? '※ 모드: 실제 브라우저 (플레이어 로드) · 시청자 수에 반영될 수 있습니다.'
+                : '※ 모드: 요청 전송만 · 시청자 수는 증가하지 않습니다. Vercel은 서버리스라 실제 브라우저 모드를 지원하지 않습니다. 실제 반영: 로컬 <code>npm run server</code> 또는 Railway/Render 등 서버 호스팅.';
+        }
+    })
+    .catch(function () {
+        usePuppeteer = false;
+        if (modeNoticeEl) {
+            modeNoticeEl.innerHTML = '※ 모드: 요청 전송만 · 시청자 수는 증가하지 않습니다. Vercel은 서버리스라 실제 브라우저(플레이어) 모드를 지원하지 않습니다. 실제 반영을 원하면 로컬에서 <code>npm run server</code> 또는 Railway/Render 등 서버 호스팅에 배포하세요.';
+        }
+    });
 
 // 초기 통계
 updateStats(0, 0, 0);
