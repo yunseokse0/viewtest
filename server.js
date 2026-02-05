@@ -30,9 +30,26 @@ function pushLog(type, message) {
     if (logBuffer.length > LOG_BUFFER_MAX) logBuffer.shift();
 }
 
+// 헬스 체크 (서버 응답 확인용)
+app.get('/health', (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.json({ ok: true, message: 'ViewBot server running' });
+});
+
+// favicon 404 제거 (콘솔 로그 정리)
+app.get('/favicon.ico', (req, res) => {
+    res.status(204).end();
+});
+
 // 루트 경로
 app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    const indexPath = path.join(__dirname, 'public', 'index.html');
+    res.sendFile(indexPath, (err) => {
+        if (err) {
+            console.error('index.html send error:', err);
+            res.status(500).send('<h1>서버 오류</h1><p>public/index.html을 찾을 수 없습니다. 프로젝트 루트에서 npm run server를 실행하세요.</p>');
+        }
+    });
 });
 
 // 백엔드 능력: Puppeteer 사용 가능 → 실제 브라우저·플레이어 로드 (시청자 수 반영 가능)
@@ -217,8 +234,15 @@ if (process.env.VERCEL) {
     module.exports = app;
 } else {
     // 로컬 개발 환경
+    const publicDir = path.join(__dirname, 'public');
+    const fs = require('fs');
+    if (!fs.existsSync(path.join(publicDir, 'index.html'))) {
+        console.error('오류: public/index.html이 없습니다. 다음 경로를 확인하세요:', publicDir);
+        process.exit(1);
+    }
     server.listen(PORT, () => {
         console.log(`서버가 http://localhost:${PORT} 에서 실행 중입니다.`);
+        console.log('정적 파일 경로:', publicDir);
         pushLog('info', '서버가 시작되었습니다. URL 입력 후 [봇 시작]을 누르세요.');
     });
 }

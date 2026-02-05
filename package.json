@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node viewbot.js",
     "server": "node server.js",
+    "server:3001": "set PORT=3001 && node server.js",
     "dev": "node api-server.js",
     "build": "echo 'No build step required'",
     "vercel-build": "echo 'No build step required'"

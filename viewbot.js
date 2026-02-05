@@ -624,8 +624,8 @@ class ViewBot extends EventEmitter {
             }
         }
         const MAX_CONCURRENT = Math.min(this.maxConcurrent, this.numInstances);
-        // 동시 실행 많을수록 시작 간격 넓혀서 부하 분산 → 타임아웃 감소
-        const START_STAGGER_MS = MAX_CONCURRENT <= 5 ? 500 : (MAX_CONCURRENT >= 15 ? 1000 : 600);
+        // 드라마틱한 증가: 15명 이상일 때 시작 간격 500ms로 빠르게 투입 → 시청자 수가 크게 늘어나는 효과
+        const START_STAGGER_MS = MAX_CONCURRENT <= 5 ? 500 : (MAX_CONCURRENT >= 15 ? 500 : 600);
         this.emit('update', { type: 'info', message: `총 ${this.numInstances}개 · 한번에 ${MAX_CONCURRENT}명씩 (간격 ${START_STAGGER_MS}ms)` });
         const isYouTube = this.url.includes('youtube.com') || this.url.includes('youtu.be');
         if (isYouTube) {

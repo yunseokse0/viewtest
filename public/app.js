@@ -196,6 +196,10 @@ function runPuppeteerMode(url, instances, minDelaySec, maxDelaySec, maxConcurren
     const maxMs = maxDelaySec < 1000 ? maxDelaySec * 1000 : maxDelaySec;
     const concurrent = Math.min(Math.max(maxConcurrent || 12, 1), 100);
 
+    // YouTube URL이면 브라우저 보이기(headless: false) → 시청자 수 집계 가능성 높음
+    var isYouTubeUrl = url && (url.indexOf('youtube.com') >= 0 || url.indexOf('youtu.be') >= 0);
+    var headless = !isYouTubeUrl;
+
     fetch('/api/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -205,7 +209,7 @@ function runPuppeteerMode(url, instances, minDelaySec, maxDelaySec, maxConcurren
             maxConcurrent: concurrent,
             minDelay: minMs,
             maxDelay: maxMs,
-            headless: true
+            headless: headless
         })
     })
         .then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
@@ -228,6 +232,7 @@ function runPuppeteerMode(url, instances, minDelaySec, maxDelaySec, maxConcurren
             runState.estimatedMin = Math.max(1, Math.ceil((instances / concurrent) * 2.5));
             runtimeInterval = setInterval(updateRuntime, 1000);
             addLog('success', '시작: ' + url + ' (총 ' + instances + '개, 한번에 ' + concurrent + '명씩 동시 시청)');
+            if (isYouTubeUrl) addLog('info', 'YouTube URL → 브라우저 보이기 모드(headed)로 실행 · 시청자 수 반영 가능성 높음');
             addLog('info', '예상 소요 시간: 약 ' + runState.estimatedMin + '분 (세션당 약 2~3분 가정)');
             updateStats(0, instances, 0);
 
@@ -462,6 +467,26 @@ function runFetchMode(url, instances, minDelay, maxDelay) {
     } else {
         finish();
     }
+}
+
+// 드라마틱 모드 체크 시 요청 40, 동시 18로 설정
+var dramaticCheck = document.getElementById('dramaticMode');
+if (dramaticCheck) {
+    dramaticCheck.addEventListener('change', function () {
+        if (this.checked) {
+            var inst = document.getElementById('instances');
+            var conc = document.getElementById('maxConcurrent');
+            if (inst) inst.value = 40;
+            if (conc) conc.value = 18;
+            if (typeof updateEstimatedTime === 'function') updateEstimatedTime();
+        } else {
+            var inst = document.getElementById('instances');
+            var conc = document.getElementById('maxConcurrent');
+            if (inst) inst.value = 20;
+            if (conc) conc.value = 12;
+            if (typeof updateEstimatedTime === 'function') updateEstimatedTime();
+        }
+    });
 }
 
 botForm.addEventListener('submit', function (e) {
