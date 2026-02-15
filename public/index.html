@@ -3,15 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ViewBot - 웹사이트 접속 시뮬레이션 (프론트 전용)</title>
-    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-    <link rel="stylesheet" href="style.css?v=2">
+    <title>ViewBot - 웹사이트 접속 시뮬레이션</title>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="container">
         <header>
             <h1>🚀 ViewBot</h1>
-            <p class="subtitle">웹사이트 접속 시뮬레이션 · 서버 없이 브라우저만으로 동작</p>
+            <p class="subtitle">웹사이트 접속 시뮬레이션 도구</p>
         </header>
 
         <div class="main-content">
@@ -20,40 +19,37 @@
                 <form id="botForm">
                     <div class="form-group">
                         <label for="url">URL</label>
-                        <input type="text" id="url" name="url" placeholder="https://example.com 또는 URL 붙여넣기" required autocomplete="url">
+                        <input type="url" id="url" name="url" placeholder="https://www.youtube.com/watch?v=9aIHJ3cKsLo" required>
                     </div>
 
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="instances">요청 수</label>
-                            <input type="number" id="instances" name="instances" value="20" min="1" max="2000" required title="총 시청 시뮬레이션 횟수. 5~10명 증가 목표면 15~20 권장.">
+                            <label for="instances">동시 실행 수</label>
+                            <input type="number" id="instances" name="instances" value="5" min="1" max="300" required>
                         </div>
+
                         <div class="form-group">
-                            <label for="maxConcurrent">동시 실행 수</label>
-                            <input type="number" id="maxConcurrent" name="maxConcurrent" value="12" min="1" max="100" title="한번에 몇 명씩. 12권장(타임아웃 적음). PC 좋으면 20~30.">
+                            <label for="minDelay">최소 대기 시간 (초)</label>
+                            <input type="number" id="minDelay" name="minDelay" value="5" min="1" max="60" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="maxDelay">최대 대기 시간 (초)</label>
+                            <input type="number" id="maxDelay" name="maxDelay" value="15" min="1" max="120" required>
                         </div>
                     </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="minDelay">요청 간 최소 대기 (초)</label>
-                            <input type="number" id="minDelay" name="minDelay" value="2" min="0" max="60" required>
-                        </div>
 
-                        <div class="form-group">
-                            <label for="maxDelay">요청 간 최대 대기 (초)</label>
-                            <input type="number" id="maxDelay" name="maxDelay" value="5" min="0" max="120" required>
-                        </div>
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="headless" name="headless" checked>
+                            <span>헤드리스 모드 (브라우저 창 숨김)</span>
+                        </label>
+                        <label class="checkbox-label" style="margin-top:8px;">
+                            <input type="checkbox" id="playMuted" name="playMuted" checked>
+                            <span>음소거 재생</span>
+                        </label>
                     </div>
-                    <p class="hint">※ <strong>동시 실행 수 12</strong>(권장): 타임아웃을 줄이고 시청 완료를 늘립니다. PC가 여유 있으면 20~30으로 올리세요.</p>
-                    <p class="hint">※ <strong>5~10명 이상 증가</strong>를 보려면: 요청 수 <strong>15~20</strong>, 동시 실행 수 <strong>12</strong>로 설정 후 시작하세요. 완료 수가 많을수록 시청자 증가에 반영됩니다.</p>
-                    <p class="hint">※ <strong>드라마틱한 시청자 증가</strong>: 요청 수 <strong>40</strong>, 동시 실행 수 <strong>18</strong> 권장. PC 사양이 좋을 때 사용하세요.</p>
-                    <label class="dramatic-option"><input type="checkbox" id="dramaticMode" /> 빠른 시청자 증가 모드 (요청 40, 동시 18)</label>
 
-                    <p id="modeNotice" class="hint mode-notice"></p>
-                    <p class="hint">※ 새 탭·팝업을 열지 않습니다. 요청만 전송하거나 서버에서 브라우저를 실행합니다.</p>
-                    <p class="hint">※ YouTube 시청자 수: Vercel 환경변수 <strong>YOUTUBE_API_KEY</strong> 설정 필요.</p>
-
-                    <p class="hint" id="estimatedTimeHint" style="display:none;">※ 현재 설정 기준 <strong>예상 소요 시간: 약 <span id="estimatedTimeMin">-</span>분</strong> (세션당 약 2~3분 가정)</p>
                     <div class="button-group">
                         <button type="submit" id="startBtn" class="btn btn-primary">시작</button>
                         <button type="button" id="stopBtn" class="btn btn-danger" disabled>중지</button>
@@ -65,7 +61,7 @@
                 <h2>통계</h2>
                 <div class="stats-grid">
                     <div class="stat-card">
-                        <div class="stat-label">목표 요청 수</div>
+                        <div class="stat-label">총 접속 수</div>
                         <div class="stat-value" id="totalVisits">0</div>
                     </div>
                     <div class="stat-card">
@@ -85,19 +81,17 @@
                     <div class="stat-label">실행 시간</div>
                     <div class="stat-value" id="runtime">00:00:00</div>
                 </div>
-
-                <div id="viewerCountPanel" class="viewer-count-panel">
-                    <h3>📺 YouTube 시청자 통계</h3>
-                    <p class="viewer-hint">YouTube 라이브 URL 입력 후 시작하면 시청자 수가 여기에 표시됩니다. 안 나오면 아래 오류 메시지와 로그를 확인하세요.</p>
-                    <p class="viewer-hint" style="margin-top:6px; color:#555;">※ <strong>증가는 봇이 완료한 세션</strong>(로그의 "이 방송에 시청자 1명 반영됨")이 YouTube에 반영된 결과입니다. <strong>5~10명 이상</strong> 보려면 요청 수 <strong>15~20</strong>, 동시 실행 수 <strong>12</strong> 권장.</p>
-                    <p id="viewerCountError" class="viewer-error" style="display: none;"></p>
+                
+                <!-- YouTube 시청자 수 표시 (YouTube URL일 때만 표시) -->
+                <div id="viewerCountPanel" class="viewer-count-panel" style="display: none;">
+                    <h3>YouTube 시청자 수</h3>
                     <div class="viewer-stats">
                         <div class="viewer-stat-item">
-                            <div class="stat-label">시작 시 시청자</div>
+                            <div class="stat-label">시작 시</div>
                             <div class="stat-value" id="initialViewerCount">-</div>
                         </div>
                         <div class="viewer-stat-item">
-                            <div class="stat-label">현재 시청자</div>
+                            <div class="stat-label">현재</div>
                             <div class="stat-value" id="currentViewerCount">-</div>
                         </div>
                         <div class="viewer-stat-item">
@@ -105,26 +99,11 @@
                             <div class="stat-value" id="viewerChange">-</div>
                         </div>
                     </div>
-                    <div id="viewerResult" class="viewer-result"></div>
+                    <div class="chart-container">
+                        <canvas id="viewerChart"></canvas>
+                    </div>
                 </div>
             </div>
-        </div>
-
-        <div id="finalReportPanel" class="report-panel" style="display: none;">
-            <h3>📋 최종 보고서</h3>
-            <div id="finalReportContent" class="report-content"></div>
-        </div>
-
-        <div class="check-panel">
-            <h3>✅ 정상 작동 확인 방법</h3>
-            <ol class="check-list">
-                <li><strong>페이지 로드 후</strong> 상단에 "모드: 실제 브라우저 (플레이어 로드)"가 보이면 → 서버 연결·백엔드 정상.</li>
-                <li><strong>시작 클릭 후</strong> 로그에 <code>시작: ... (총 N개, 한번에 M명씩)</code> → 봇 시작 요청 정상.</li>
-                <li><strong>이어서</strong> <code>[인스턴스 1] 브라우저 시작...</code>, <code>페이지 로드 완료</code> → 브라우저·페이지 열기 정상.</li>
-                <li><strong>YouTube URL인 경우</strong> <code>비디오 재생 중 - 최소 60초 이상 시청</code> → 재생 정상. <code>이 방송에 시청자 1명 반영됨</code> → 시청자 반영 정상.</li>
-                <li><strong>통계</strong>에서 완료 수가 늘고, YouTube 시청자 통계에서 "변화 +N명"이 나오면 → 솔루션 정상 작동.</li>
-            </ol>
-            <p class="hint" style="margin-top:8px;">※ 위 로그가 전혀 안 나오거나 "서버 연결 실패"면 터미널에서 <code>npm run server</code> 실행 여부를 확인하세요.</p>
         </div>
 
         <div class="log-panel">
@@ -134,8 +113,25 @@
             </div>
             <div id="logContainer" class="log-container"></div>
         </div>
+
+        <div class="control-panel" style="margin-top:16px">
+            <h2>프록시 관리</h2>
+            <form id="proxyForm">
+                <div class="form-group">
+                    <label for="proxiesText">프록시 목록 (줄바꿈 또는 쉼표로 구분)</label>
+                    <textarea id="proxiesText" rows="5" placeholder="http://user:pass@host:port, socks5://host:1080"></textarea>
+                </div>
+                <div class="button-group">
+                    <button type="submit" class="btn btn-primary">프록시 업데이트</button>
+                    <button type="button" id="clearProxyBlacklistBtn" class="btn btn-small">블랙리스트 초기화</button>
+                    <button type="button" id="purgeFailingBtn" class="btn btn-small">실패 프록시 제거</button>
+                </div>
+            </form>
+        </div>
     </div>
 
-    <script src="app.js?v=2"></script>
-</body>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="app.js"></script>
+<script src="reset_proxies.js"></script></body>
 </html>
