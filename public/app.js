@@ -218,7 +218,16 @@ botForm.addEventListener('submit', async (e) => {
         minDelay: document.getElementById('minDelay').value * 1000, // 초를 밀리초로 변환
         maxDelay: document.getElementById('maxDelay').value * 1000,
         headless: document.getElementById('headless').checked,
-        playMuted: document.getElementById('playMuted').checked
+        playMuted: document.getElementById('playMuted').checked,
+        // 자동 시청자 수 관리 설정
+        autoViewerManagement: document.getElementById('autoViewerManagement').checked,
+        targetViewerCount: document.getElementById('targetViewerCount').value,
+        minViewerCount: document.getElementById('minViewerCount').value,
+        maxViewerCount: document.getElementById('maxViewerCount').value,
+        viewerCheckInterval: document.getElementById('viewerCheckInterval').value * 1000,
+        increaseDuration: document.getElementById('increaseDuration').value * 1000,
+        decreaseDuration: document.getElementById('decreaseDuration').value * 1000,
+        maxCycles: document.getElementById('maxCycles').value
     };
     
     try {
@@ -359,6 +368,31 @@ if (clearProxyBlacklistBtn) {
         }
     });
 }
+
+// 자동 시청자 수 관리 체크박스 이벤트
+const autoViewerManagementCheckbox = document.getElementById('autoViewerManagement');
+const viewerManagementOptions = document.querySelector('.viewer-management-options');
+
+if (autoViewerManagementCheckbox && viewerManagementOptions) {
+    autoViewerManagementCheckbox.addEventListener('change', function() {
+        viewerManagementOptions.style.display = this.checked ? 'block' : 'none';
+        
+        // YouTube URL이 아닌 경우 경고
+        const url = document.getElementById('url').value;
+        if (this.checked && !url.includes('youtube.com') && !url.includes('youtu.be')) {
+            addLog('warning', '⚠️ 자동 시청자 수 관리는 YouTube URL에서만 작동합니다.');
+        }
+    });
+}
+
+// URL 변경 시 자동 시청자 수 관리 체크박스 상태 확인
+document.getElementById('url').addEventListener('input', function() {
+    if (autoViewerManagementCheckbox && autoViewerManagementCheckbox.checked) {
+        if (!this.value.includes('youtube.com') && !this.value.includes('youtu.be')) {
+            addLog('warning', '⚠️ 자동 시청자 수 관리는 YouTube URL에서만 작동합니다.');
+        }
+    }
+});
 
 const purgeFailingBtn = document.getElementById('purgeFailingBtn');
 if (purgeFailingBtn) {

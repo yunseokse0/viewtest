@@ -48,6 +48,56 @@
                             <input type="checkbox" id="playMuted" name="playMuted" checked>
                             <span>음소거 재생</span>
                         </label>
+                        
+                        <!-- 자동 시청자 수 관리 설정 -->
+                        <div class="auto-viewer-management" style="margin-top: 16px; padding: 12px; background: #f8f9fa; border-radius: 6px;">
+                            <h4 style="margin: 0 0 12px 0; font-size: 14px; color: #333;">🎯 자동 시청자 수 관리</h4>
+                            
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="autoViewerManagement" name="autoViewerManagement">
+                                <span>자동 관리 활성화</span>
+                            </label>
+                            
+                            <div class="viewer-management-options" style="margin-top: 12px; display: none;">
+                                <div class="form-group">
+                                    <label for="targetViewerCount">목표 시청자 수:</label>
+                                    <input type="number" id="targetViewerCount" name="targetViewerCount" value="25" min="10" max="100">
+                                </div>
+                                
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="minViewerCount">최소 시청자:</label>
+                                        <input type="number" id="minViewerCount" name="minViewerCount" value="20" min="5" max="50">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="maxViewerCount">최대 시청자:</label>
+                                        <input type="number" id="maxViewerCount" name="maxViewerCount" value="35" min="15" max="100">
+                                    </div>
+                                </div>
+                                
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="increaseDuration">증가 시간 (초):</label>
+                                        <input type="number" id="increaseDuration" name="increaseDuration" value="300" min="60" max="1800">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="decreaseDuration">감소 시간 (초):</label>
+                                        <input type="number" id="decreaseDuration" name="decreaseDuration" value="300" min="60" max="1800">
+                                    </div>
+                                </div>
+                                
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="maxCycles">반복 횟수:</label>
+                                        <input type="number" id="maxCycles" name="maxCycles" value="3" min="1" max="10">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="viewerCheckInterval">확인 간격 (초):</label>
+                                        <input type="number" id="viewerCheckInterval" name="viewerCheckInterval" value="30" min="10" max="300">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="button-group">

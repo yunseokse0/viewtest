@@ -28,7 +28,22 @@ app.get('/', (req, res) => {
 
 // 봇 시작 API
 app.post('/api/start', (req, res) => {
-    const { url, instances, minDelay, maxDelay, headless, playMuted } = req.body;
+    const { 
+        url, 
+        instances, 
+        minDelay, 
+        maxDelay, 
+        headless, 
+        playMuted,
+        autoViewerManagement,
+        targetViewerCount,
+        minViewerCount,
+        maxViewerCount,
+        viewerCheckInterval,
+        increaseDuration,
+        decreaseDuration,
+        maxCycles
+    } = req.body;
 
     if (!url) {
         return res.status(400).json({ error: 'URL이 필요합니다.' });
@@ -46,7 +61,15 @@ app.post('/api/start', (req, res) => {
             minDelay: parseInt(minDelay) || 5000,
             maxDelay: parseInt(maxDelay) || 15000,
             headless: headless !== false,
-            playMuted: playMuted !== false
+            playMuted: playMuted !== false,
+            autoViewerManagement: autoViewerManagement !== false,
+            targetViewerCount: parseInt(targetViewerCount) || 25,
+            minViewerCount: parseInt(minViewerCount) || 20,
+            maxViewerCount: parseInt(maxViewerCount) || 35,
+            viewerCheckInterval: parseInt(viewerCheckInterval) || 30000,
+            increaseDuration: parseInt(increaseDuration) || 300000,
+            decreaseDuration: parseInt(decreaseDuration) || 300000,
+            maxCycles: parseInt(maxCycles) || 3
         });
 
         // 모든 클라이언트에게 이벤트 전달

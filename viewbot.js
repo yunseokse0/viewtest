@@ -34,6 +34,24 @@ class ViewBot extends EventEmitter {
             currentViewerCount: null,
             viewerHistory: [] // 시청자 수 히스토리
         };
+        this.proxyMaintenanceInterval = null;
+        this.externalIPMap = new Map();
+        
+        // 자동 시청자 수 관리 설정
+        this.autoViewerManager = {
+            enabled: options.autoViewerManagement !== false,
+            targetCount: options.targetViewerCount || 25, // 목표 시청자 수
+            minCount: options.minViewerCount || 20, // 최소 유지 시청자 수
+            maxCount: options.maxViewerCount || 35, // 최대 시청자 수
+            checkInterval: options.viewerCheckInterval || 30000, // 30초마다 확인
+            increaseDuration: options.increaseDuration || 300000, // 5분간 증가
+            decreaseDuration: options.decreaseDuration || 300000, // 5분간 감소
+            maxCycles: options.maxCycles || 3, // 최대 반복 횟수
+            currentCycle: 0,
+            isIncreasing: true,
+            managerInterval: null,
+            startTime: null
+        };
     }
 
     getProxyForInstance(instanceId) {
@@ -57,7 +75,7 @@ class ViewBot extends EventEmitter {
     isSupportedProxy(proxy) {
         try {
             const u = new URL(proxy.includes('://') ? proxy : `http://${proxy}`);
-            return u.protocol === 'http:' || u.protocol === 'https:';
+            return u.protocol === 'http:' || u.protocol === 'https:' || u.protocol === 'socks5:' || u.protocol === 'socks4:';
         } catch (_) {
             return true;
         }
@@ -337,40 +355,92 @@ class ViewBot extends EventEmitter {
                     await page.setUserAgent(this.getUserAgent());
                     await page.setViewport(this.getViewport());
 
-                    const externalIP = await this.getPublicIP(page);
-                    this.emit('update', { type: 'info', message: `[인스턴스 ${instanceId}] 외부 IP: ${externalIP}` });
+                    if (process.env.DEBUG_IP === 'true') {
+                        const externalIP = await this.getPublicIP(page);
+                        this.emit('update', { type: 'info', message: `[인스턴스 ${instanceId}] 외부 IP: ${externalIP}` });
+                        const prev = this.externalIPMap.get(externalIP) || 0;
+                        this.externalIPMap.set(externalIP, prev + 1);
+                        if (this.externalIPMap.get(externalIP) >= 3) {
+                            this.emit('update', { type: 'warning', message: `동일 외부 IP 사용 프록시 다수 감지: ${externalIP}` });
+                        }
+                    }
 
-                    // 페이지 로드 재시도
-                    await page.goto(effectiveUrl, { 
-                        waitUntil: 'networkidle2', 
-                        timeout: 60000 
+                    // YouTube인 경우 더 빠른 로드를 위해 networkidle0 사용, 다른 사이트는 networkidle2
+                    const waitUntilStrategy = (this.url.includes('youtube.com') || this.url.includes('youtu.be')) 
+                        ? 'networkidle0' 
+                        : 'networkidle2';
+                    
+                    await page.goto(effectiveUrl, {
+                        waitUntil: waitUntilStrategy,
+                        timeout: 120000
                     });
 
-                    // 페이지가 실제로 로드되었는지 확인
-                    await page.waitForFunction(() => {
-                        return document.readyState === 'complete' && 
-                               document.body && 
-                               document.body.innerText.length > 100;
-                    }, { timeout: 15000 }).catch(() => {
-                        throw new Error('페이지 콘텐츠 로드 시간 초과');
-                    });
+                    try {
+                        await page.waitForSelector('body', { timeout: 10000 });
+                    } catch (_) {}
+
+                    // YouTube 특화 로드 확인
+                    if (this.url.includes('youtube.com') || this.url.includes('youtu.be')) {
+                        try {
+                            // 비디오 요소 또는 플레이어 확인 (모바일/데스크톱 모두 지원)
+                            await page.waitForFunction(() => {
+                                return !!document.querySelector('video, #player, .html5-video-player, #movie_player, [data-testid="player"]');
+                            }, { timeout: 20000 });
+                            
+                            // 추가로 페이지 콘텐츠 확인
+                            const hasContent = await page.evaluate(() => {
+                                const video = document.querySelector('video');
+                                const title = document.querySelector('h1, .title, #container h1');
+                                const hasText = document.body && document.body.innerText.length > 50;
+                                return !!(video || title || hasText);
+                            });
+                            
+                            if (!hasContent) {
+                                throw new Error('YouTube 콘텐츠 로드 실패');
+                            }
+                        } catch (e) {
+                            throw new Error('YouTube 페이지 로드 시간 초과: ' + e.message);
+                        }
+                    } else {
+                        // 일반 사이트 로드 확인
+                        try {
+                            await page.waitForFunction(() => {
+                                const ready = document.readyState === 'complete';
+                                const hasBody = !!document.body;
+                                const textLen = hasBody ? (document.body.innerText || '').length : 0;
+                                return ready && hasBody && textLen > 20;
+                            }, { timeout: 25000 });
+                        } catch (e) {
+                            throw new Error('페이지 콘텐츠 로드 시간 초과');
+                        }
+                    }
 
                     pageLoaded = true;
 
                 } catch (error) {
                     lastError = error;
+                    if (activeProxy && /timeout|시간 초과|콘텐츠 로드/.test(error.message || '')) {
+                        this.markProxyResult(activeProxy, false, error.message);
+                    }
                     if (retryCount < maxRetries - 1) {
+                        // 프록시 실패 시 즉시 교체, 그 외는 짧은 대기
+                        const isProxyError = /timeout|시간 초과|콘텐츠 로드|connection|proxy/i.test(error.message || '');
+                        const waitTime = isProxyError ? this.randomDelay(1000, 3000) : this.randomDelay(3000, 6000);
+                        
                         this.emit('update', { type: 'warning', message: `[인스턴스 ${instanceId}] 재시도 중... (${retryCount + 1}/${maxRetries}) - ${error.message}` });
-                        await this.sleep(this.randomDelay(5000, 10000)); // 재시도 전 더 긴 대기
+                        await this.sleep(waitTime);
+                        
                         try { if (browser) await browser.close(); } catch (_) {}
                         browser = null;
                         
-                        // 프록시 교체 시도
-                        const nextProxy = this.getHealthyProxy(instanceId + retryCount + 1);
-                        if (nextProxy && nextProxy !== activeProxy) {
-                            activeProxy = nextProxy;
-                            activeProxyConf = this.parseProxyAuth(nextProxy);
-                            this.emit('update', { type: 'info', message: `[인스턴스 ${instanceId}] 프록시 교체: ${activeProxyConf.server}` });
+                        // 프록시 교체 시도 (프록시 에러거나 첫 재시도인 경우)
+                        if (isProxyError || retryCount === 0) {
+                            const nextProxy = this.getHealthyProxy(instanceId + retryCount + 1);
+                            if (nextProxy && nextProxy !== activeProxy) {
+                                activeProxy = nextProxy;
+                                activeProxyConf = this.parseProxyAuth(nextProxy);
+                                this.emit('update', { type: 'info', message: `[인스턴스 ${instanceId}] 프록시 교체: ${activeProxyConf.server}` });
+                            }
                         }
                     }
                 }
@@ -632,6 +702,11 @@ class ViewBot extends EventEmitter {
 
         this.running = true;
         this.stats.startTime = new Date();
+        
+        // 자동 시청자 수 관리 시작
+        if (this.autoViewerManager.enabled && (this.url.includes('youtube.com') || this.url.includes('youtu.be'))) {
+            this.startAutoViewerManagement();
+        }
         this.stats.totalVisits = 0;
         this.stats.activeSessions = 0;
         this.stats.completedSessions = 0;
@@ -668,8 +743,9 @@ class ViewBot extends EventEmitter {
         this.emit('stats', this.stats);
 
         // 배치 처리: 한번에 너무 많은 인스턴스를 실행하지 않도록 제한
-        const batchSize = Math.min(50, this.numInstances); // 최대 50개씩 배치 처리
+        const batchSize = Math.min(this.getMaxConcurrent(), this.numInstances);
         const promises = [];
+        this.startProxyMaintenance();
         
         for (let i = 0; i < this.numInstances; i++) {
             const promise = (async () => {
@@ -682,12 +758,13 @@ class ViewBot extends EventEmitter {
             
             // 배치 크기만큼 실행 후 잠시 대기 (시스템 부하 분산)
             if ((i + 1) % batchSize === 0 && i < this.numInstances - 1) {
-                await this.sleep(2000); // 배치 간 대기
+                await this.sleep(this.randomDelay(3000, 6000)); // 배치 간 대기 (더 여유)
             }
         }
 
         await Promise.all(promises);
         this.running = false;
+        this.stopProxyMaintenance();
         this.emit('update', { type: 'success', message: '모든 세션이 완료되었습니다.' });
         this.emit('complete');
     }
@@ -903,7 +980,7 @@ class ViewBot extends EventEmitter {
     getEffectiveUrl() {
         try {
             const u = new URL(this.url);
-            if ((this.mobileEmulation) && (u.hostname.includes('youtube.com'))) {
+            if (u.hostname.includes('youtube.com')) {
                 if (u.pathname.includes('/watch') && u.searchParams.has('v')) {
                     return `https://m.youtube.com/watch?v=${u.searchParams.get('v')}`;
                 }
@@ -916,6 +993,13 @@ class ViewBot extends EventEmitter {
      */
     randomDelay(min, max) {
         return Math.floor(Math.random() * (max - min + 1)) + min;
+    }
+
+    getMaxConcurrent() {
+        const envMax = parseInt(process.env.MAX_CONCURRENT || '', 10);
+        if (!isNaN(envMax) && envMax > 0) return envMax;
+        const isYouTube = this.url.includes('youtube.com') || this.url.includes('youtu.be');
+        return isYouTube ? 12 : 25;
     }
 
     async checkProxy(proxy) {
@@ -994,6 +1078,28 @@ class ViewBot extends EventEmitter {
     
     getProxyStatsSnapshot() {
         return { stats: this.proxyStats, blacklist: Array.from(this.proxyBlacklist || []), list: this.proxies.slice() };
+    }
+    
+    startProxyMaintenance() {
+        if (this.proxyMaintenanceInterval) {
+            clearInterval(this.proxyMaintenanceInterval);
+        }
+        const intervalMs = parseInt(process.env.PROXY_MAINTENANCE_INTERVAL || '45000', 10);
+        const threshold = parseInt(process.env.PROXY_FAIL_THRESHOLD || '2', 10);
+        this.proxyMaintenanceInterval = setInterval(() => {
+            if (!this.running) return;
+            const result = this.purgeFailingProxies(threshold);
+            if (result.removed > 0) {
+                this.emit('update', { type: 'warning', message: `실패 프록시 자동 정리: ${result.removed}개 제거 (남은 ${result.remaining}개)` });
+            }
+        }, isNaN(intervalMs) ? 45000 : intervalMs);
+    }
+    
+    stopProxyMaintenance() {
+        if (this.proxyMaintenanceInterval) {
+            clearInterval(this.proxyMaintenanceInterval);
+            this.proxyMaintenanceInterval = null;
+        }
     }
 
     /**
